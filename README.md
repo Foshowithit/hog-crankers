@@ -6,7 +6,7 @@ An open-world action-comedy riding game. You are HOSS, stranded in CRANK COUNTY.
 The only stat is PACK RESPECT, earned through acts of brotherhood. Your hog can
 be anything. The H.O.A. hates joy. The moon is a flaming skull, because it should be.
 
-▶ **PLAY: https://optimizedwf.github.io/hog-crankers/**
+▶ **PLAY: https://Foshowithit.github.io/hog-crankers/**
 
 ## How to ride
 
