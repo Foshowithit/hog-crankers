@@ -376,10 +376,17 @@
     gasStation.add(signPost);
     var sign = new THREE.Mesh(
       new THREE.BoxGeometry(14, 5, 0.4),
-      new THREE.MeshLambertMaterial({ map: signTexture('DED HOG', 'GAS-N-GO', {}) })
+      new THREE.MeshBasicMaterial({ map: signTexture('DED HOG', 'GAS-N-GO', {}) })
     );
     sign.position.set(0, 13, 11);
     gasStation.add(sign);
+    /* neon: unlit sign + canopy light strip + one warm point light = night beacon */
+    var strip = new THREE.Mesh(new THREE.BoxGeometry(21, 0.14, 13), new THREE.MeshBasicMaterial({ color: 0xffb36b }));
+    strip.position.y = 6.32;
+    gasStation.add(strip);
+    var glow = new THREE.PointLight(0xff9a4a, 1.15, 58);
+    glow.position.set(0, 6, 0);
+    gasStation.add(glow);
   })();
   scene.add(gasStation);
 
