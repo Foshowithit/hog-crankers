@@ -13,6 +13,8 @@
   function pick(arr) { return arr[(Math.random() * arr.length) | 0]; }
 
   var audio = window.HogAudio;
+  var voice = window.HogVoice;   /* speech synthesis — optional, no-ops if absent */
+  var IS_TOUCH = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || /forcetouch/.test(location.search);
 
   /* ---------------- difficulty ---------------- */
   var DIFFS = [
@@ -29,7 +31,7 @@
   /* ---------------- three bootstrap ---------------- */
   var canvas = document.getElementById('game');
   var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, IS_TOUCH ? 1.15 : 1.5));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -217,7 +219,7 @@
   for (var s2 = 0; s2 < N_SEG; s2++) placeSegment(segments[s2], s2 * SEG_LEN);
 
   /* ---------------- corn (instanced crossed leaf planes) ---------------- */
-  var CORN_N = 2400;
+  var CORN_N = IS_TOUCH ? 1300 : 2400;
   var cornGeo = new THREE.PlaneGeometry(2.6, 2.5);
   cornGeo.translate(0, 1.25, 0);
   var cornMat = new THREE.MeshLambertMaterial({
@@ -695,6 +697,7 @@
     quest.rope.visible = false;
     scene.add(quest.rope);
     showQuestBanner(quest.data);
+    if (voice) voice.event('quest', { name: quest.data.brother, distress: quest.data.distress });
     audio.stinger('quest');
     el.questbanner.style.display = 'block';
   }
@@ -736,6 +739,7 @@
     addRespect(reward);
     audio.stinger('deliver');
     audio.howl(0.8);
+    if (voice) voice.event('deliver');
     if (!ach.firstQuest) { ach.firstQuest = true; toast('HELL YEAH BROTHER', 'FIRST BROTHER DELIVERED. THE COUCH RIDES ETERNAL.'); }
     removeQuestActors();
     quest.active = false;
@@ -766,6 +770,7 @@
       showOverlay('rankup', 2300);
       audio.howl(1.0);
       setPackSize(PACK_SIZES[t]);
+      if (voice) voice.event('rankup', { tier: TIERS[t][1] });
       toast('HELL YEAH BROTHER', 'RANK UP: ' + TIERS[t][1]);
     }
   }
@@ -860,6 +865,7 @@
       }
       var gained = Math.round(25 * crank.chain * diff.resMul);
       addRespect(gained);
+      if (voice) { voice.event('crankPerfect'); voice.event('maxcrank', { chain: crank.chain }); }
       toast('MAXIMUM CRANK ×' + crank.chain, '+' + gained + ' PACK RESPECT');
       el.comboval.textContent = 'MAXIMUM CRANK ×' + crank.chain;
       el.combo.style.display = 'block';
@@ -885,6 +891,7 @@
     el.combo.style.display = 'none';
     el.sweetzone.style.display = 'none';
     audio.crankOver();
+    if (voice) voice.event('overcrank');
     hideOverlay('gameover');
     showOverlay('gameover');
     mode = 'overcrank';
@@ -923,6 +930,7 @@
     if (e.code === 'KeyM') {
       muted = HogAudio.toggleMute();
       el.mutetag.style.display = muted ? 'block' : 'none';
+      if (voice) voice.setMuted(muted);
     }
     if (e.code === 'KeyP' && (mode === 'ride' || mode === 'overcrank')) togglePause();
     if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
@@ -959,6 +967,7 @@
     if (mode !== 'title') return;
     audio.init();
     audio.engineOn();
+    if (voice) { voice.prime(); voice.event('start'); }
     HogQuests.reset();
     game.respect = 0; game.tier = 0;
     el.respectval.textContent = '0';
@@ -1008,7 +1017,7 @@
 
   function updateRide(dt) {
     /* ---- input shaping ---- */
-    var throttle = (keys.KeyW || keys.ArrowUp) ? 1 : 0;
+    var throttle = (keys.KeyW || keys.ArrowUp || IS_TOUCH) ? 1 : 0;   /* touch rides auto-throttle */
     var brake = (keys.KeyS || keys.ArrowDown) ? 1 : 0;
     var steerIn = ((keys.KeyA || keys.ArrowLeft) ? -1 : 0) + ((keys.KeyD || keys.ArrowRight) ? 1 : 0);
 
@@ -1024,6 +1033,7 @@
         mode = 'ride';
         game.speed = 30;
         audio.engineOn();
+        if (voice) voice.event('respawn');
         toast('THE PACK GOT YOU RUNNING', 'GET BACK ON THAT MFER.');
       }
     } else {
@@ -1184,6 +1194,7 @@
       hoaCar.userData.signal.visible = (hoa.blinkT % 1.2) < 0.55;
       if (!hoa.complained && crank.active && Math.abs(hoa.z - game.z) < 45) {
         hoa.complained = true;
+        if (voice) voice.event('hoa');
         el.hoaticker.textContent = pick(HOA_LINES);
         el.hoaticker.style.display = 'block';
         setTimeout(function () { el.hoaticker.style.display = 'none'; }, 3800);
@@ -1215,6 +1226,7 @@
             quest.rope.visible = true;
             quest.brother.visible = false; // he mounts his rescue bike
             audio.stinger('ui');
+            if (voice) voice.event('attach');
           }
         } else if (quest.state === 'tow') {
           if (!quest.dest) {
@@ -1240,7 +1252,7 @@
     el.speedval.textContent = Math.round(game.speed * 3.6);
     el.meterfill.style.width = (crank.active ? crank.level * 100 : 0) + '%';
     el.arooline.textContent = 'AROOO METER: ' + Math.round((crank.active ? crank.level : 0) * 100) + '%';
-    if (!crank.active && mode === 'ride') el.meterlabel.textContent = 'HOLD SPACE — CRANK THAT HOG';
+    if (!crank.active && mode === 'ride') el.meterlabel.textContent = IS_TOUCH ? 'HOLD CRANK — CRANK THAT HOG' : 'HOLD SPACE — CRANK THAT HOG';
 
     /* ---- camera ---- */
     var shake = 0;

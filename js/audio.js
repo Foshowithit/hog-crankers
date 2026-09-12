@@ -116,6 +116,7 @@
     buildEngine();
     buildNoiseTaps();
     buildMusic();
+    buildWind();
 
     if (ctx.state === 'suspended' && ctx.resume) { try { ctx.resume(); } catch (e) {} }
     if (eng.desired) engineStart();
@@ -196,6 +197,39 @@
     eng.lopeOsc.start();
   }
 
+  // Persistent wind bed: looping noise → gusty lowpass → speed-driven gain.
+  var wind = { src: null, filt: null, amp: null };
+  function buildWind() {
+    wind.src = ctx.createBufferSource();
+    wind.src.buffer = noiseBuf;
+    wind.src.loop = true;
+    wind.filt = ctx.createBiquadFilter();
+    wind.filt.type = 'lowpass';
+    wind.filt.frequency.value = 700;
+    wind.filt.Q.value = 0.5;
+    wind.amp = ctx.createGain();
+    wind.amp.gain.value = 0;
+    var gust = ctx.createOscillator();
+    gust.type = 'sine';
+    gust.frequency.value = 0.13;                 // slow gust sweep
+    var gustDepth = ctx.createGain();
+    gustDepth.gain.value = 320;
+    gust.connect(gustDepth);
+    gustDepth.connect(wind.filt.frequency);
+    wind.src.connect(wind.filt);
+    wind.filt.connect(wind.amp);
+    wind.amp.connect(busIn);
+    wind.src.start();
+    gust.start();
+  }
+  function applyWind(tau) {
+    var t = ctx.currentTime;
+    var spd = clamp01(drive.speed);
+    wind.amp.gain.setTargetAtTime(
+      Math.pow(spd, 1.4) * 0.16 + (crank.boostT > 0 ? 0.04 : 0), t, tau);
+    wind.filt.frequency.setTargetAtTime(450 + spd * 900, t, tau);
+  }
+
   function applyEngine(tau) {
     if (!ctx) return;
     var t = ctx.currentTime;
@@ -240,7 +274,9 @@
   HogAudio.setDrive = function (speed01, rpm01) {
     drive.speed = clamp01(speed01);
     drive.rpm = clamp01(rpm01);
-    if (!ctx || !eng.on) return;
+    if (!ctx) return;
+    if (wind.amp) applyWind(0.08);
+    if (!eng.on) return;
     applyEngine(0.06);
   };
 
