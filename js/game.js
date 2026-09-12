@@ -275,6 +275,81 @@
   poleMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   scene.add(poleMesh);
 
+  /* ---------------- distant ridge silhouettes (backdrop: follows player, never recycles) ---------------- */
+  function buildRidge(tall) {
+    var COLS = 110, HALF = 1600;
+    var p1 = rand(0, 6.28), p2 = rand(0, 6.28), p3 = rand(0, 6.28);
+    var pos = new Float32Array(COLS * 2 * 3);
+    var idx = [];
+    for (var i = 0; i < COLS; i++) {
+      var z = -HALF + (i / (COLS - 1)) * HALF * 2;
+      var h = 16 + 11 * Math.sin(z * 0.004 + p1) + 8 * Math.sin(z * 0.011 + p2) + 5 * Math.sin(z * 0.027 + p3);
+      h = Math.max(4, h) * (tall ? 1.18 : 1);
+      pos[i * 6 + 0] = 0; pos[i * 6 + 1] = 0;     pos[i * 6 + 2] = z;
+      pos[i * 6 + 3] = 0; pos[i * 6 + 4] = h;     pos[i * 6 + 5] = z;
+      if (i > 0) {
+        var a = (i - 1) * 2;
+        idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      }
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    var mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x0d0705, side: THREE.DoubleSide }));
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    return mesh;
+  }
+  var ridgeL = buildRidge(true);
+  var ridgeR = buildRidge(false);
+  ridgeL.position.set(roadX(30) - 334, 0, 30);
+  ridgeR.position.set(roadX(30) + 334, 0, 30);
+
+  /* ---------------- roadside junk: dead cars + hay bales (instanced, recycled) ---------------- */
+  var AX = new THREE.Vector3(0, 1, 0);
+  var CARS_N = IS_TOUCH ? 10 : 14;
+  var carBodyGeo = new THREE.BoxGeometry(4.4, 1.1, 1.9); carBodyGeo.translate(0, 0.62, 0);
+  var carCabGeo = new THREE.BoxGeometry(2.3, 0.85, 1.72); carCabGeo.translate(-0.25, 1.5, 0);
+  var carBodyMesh = new THREE.InstancedMesh(carBodyGeo, new THREE.MeshLambertMaterial({ color: 0x3d2a1a }), CARS_N);
+  var carCabMesh = new THREE.InstancedMesh(carCabGeo, new THREE.MeshLambertMaterial({ color: 0x241a12 }), CARS_N);
+  var cars = [];
+  for (var cari = 0; cari < CARS_N; cari++) {
+    var cside = Math.random() < 0.5 ? -1 : 1;
+    cars.push({ z: rand(-100, WORLD_LEN - 100), off: cside * rand(15, 44), yaw: rand(0, Math.PI * 2) });
+  }
+  function carMatrix(i) {
+    var c = cars[i];
+    qY.setFromAxisAngle(AX, c.yaw);
+    m4.compose(new THREE.Vector3(roadX(c.z) + c.off, 0, c.z), qY, vS.set(1, 1, 1));
+    carBodyMesh.setMatrixAt(i, m4);
+    carCabMesh.setMatrixAt(i, m4);
+  }
+  for (var carj = 0; carj < CARS_N; carj++) carMatrix(carj);
+  carBodyMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  carCabMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  scene.add(carBodyMesh);
+  scene.add(carCabMesh);
+
+  var BALE_N = IS_TOUCH ? 12 : 18;
+  var baleGeo = new THREE.CylinderGeometry(0.85, 0.85, 1.5, 9);
+  baleGeo.rotateZ(Math.PI / 2); // lying on its side
+  baleGeo.translate(0, 0.85, 0);
+  var baleMesh = new THREE.InstancedMesh(baleGeo, new THREE.MeshLambertMaterial({ color: 0x5c4a22 }), BALE_N);
+  var bales = [];
+  for (var bai = 0; bai < BALE_N; bai++) {
+    var bside = Math.random() < 0.5 ? -1 : 1;
+    bales.push({ z: rand(-100, WORLD_LEN - 100), off: bside * rand(15, 40), yaw: rand(0, Math.PI) });
+  }
+  function baleMatrix(i) {
+    var b = bales[i];
+    qY.setFromAxisAngle(AX, b.yaw);
+    m4.compose(new THREE.Vector3(roadX(b.z) + b.off, 0, b.z), qY, vS.set(1, 1, 1));
+    baleMesh.setMatrixAt(i, m4);
+  }
+  for (var baj = 0; baj < BALE_N; baj++) baleMatrix(baj);
+  baleMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  scene.add(baleMesh);
+
   /* ---------------- gas station (spawn landmark) ---------------- */
   var gasStation = new THREE.Group();
   (function () {
@@ -505,8 +580,10 @@
   for (var di = 0; di < DUST_N; di++) dustPos[di * 3 + 1] = -50;
   dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
   var dustMat = new THREE.PointsMaterial({
-    color: 0x8a6f4a, size: 0.55, transparent: true, opacity: 0.5,
-    sizeAttenuation: true, depthWrite: false
+    color: 0x8a6f4a, size: 0.72, transparent: true, opacity: 0.42,
+    sizeAttenuation: true, depthWrite: false,
+    map: V.softDotTexture ? srgb(V.softDotTexture()) : null,
+    alphaTest: 0.01
   });
   var dust = new THREE.Points(dustGeo, dustMat);
   dust.frustumCulled = false;
@@ -1117,6 +1194,8 @@
     }
     updateDust(dt);
     skyDome.position.set(game.x, 0, game.z);
+    ridgeL.position.set(game.x - 334, 0, game.z);
+    ridgeR.position.set(game.x + 334, 0, game.z);
     if (stars) stars.position.set(game.x, 0, game.z);
 
     /* ---- audio drive ---- */
@@ -1142,6 +1221,18 @@
       while (poles[pk].z < game.z - 130) { poles[pk].z += POLE_N * 110; poleMatrix(pk); poleDirty = true; }
     }
     if (poleDirty) poleMesh.instanceMatrix.needsUpdate = true;
+    var junkDirty = false;
+    for (var cjr = 0; cjr < CARS_N; cjr++) {
+      while (cars[cjr].z < game.z - 130) { cars[cjr].z += WORLD_LEN; carMatrix(cjr); junkDirty = true; }
+    }
+    for (var bjr = 0; bjr < BALE_N; bjr++) {
+      while (bales[bjr].z < game.z - 130) { bales[bjr].z += WORLD_LEN; baleMatrix(bjr); junkDirty = true; }
+    }
+    if (junkDirty) {
+      carBodyMesh.instanceMatrix.needsUpdate = true;
+      carCabMesh.instanceMatrix.needsUpdate = true;
+      baleMesh.instanceMatrix.needsUpdate = true;
+    }
     for (var bi = 0; bi < billboards.length; bi++) {
       var b = billboards[bi];
       while (b.z < game.z - 130) { b.z += 4 * 640; placeBillboard(b); }

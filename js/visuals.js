@@ -197,6 +197,20 @@
     return new THREE.Points(geo, mat);
   };
 
+  /* ---------------- 6. soft round dust sprite (radial falloff, no hard square) ---------------- */
+  HogVisuals.softDotTexture = function () {
+    var S = 64;
+    var c = mkCanvas(S, S), ctx = c.getContext('2d');
+    var g = ctx.createRadialGradient(S / 2, S / 2, 1, S / 2, S / 2, S / 2);
+    g.addColorStop(0.0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.4, 'rgba(255,255,255,0.55)');
+    g.addColorStop(0.75, 'rgba(255,255,255,0.16)');
+    g.addColorStop(1.0, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, S, S);
+    return new THREE.CanvasTexture(c);
+  };
+
   /* ---------------- load-order guard (no runtime work) ---------------- */
   if (typeof window !== 'undefined' && window.THREE) {
     // THREE is present; factories are ready to call. Nothing to do at load time.
