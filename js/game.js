@@ -374,9 +374,16 @@
     var signPost = new THREE.Mesh(new THREE.BoxGeometry(0.5, 12, 0.5), new THREE.MeshLambertMaterial({ color: 0x33302a }));
     signPost.position.set(0, 6, 11);
     gasStation.add(signPost);
+    /* face: muse-forged neon art over the canvas fallback (swap-in on load) */
+    var signMat = new THREE.MeshBasicMaterial({ map: signTexture('DED HOG', 'GAS-N-GO', {}) });
+    new THREE.TextureLoader().load('assets/dedhog-sign.jpg', function (t) {
+      t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      signMat.map = srgb(t);
+      signMat.needsUpdate = true;
+    });
     var sign = new THREE.Mesh(
       new THREE.BoxGeometry(14, 5, 0.4),
-      new THREE.MeshBasicMaterial({ map: signTexture('DED HOG', 'GAS-N-GO', {}) })
+      signMat
     );
     sign.position.set(0, 13, 11);
     gasStation.add(sign);
