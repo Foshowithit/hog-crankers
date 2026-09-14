@@ -50,18 +50,38 @@
     ctx.stroke();
   }
 
-  /* ---------------- 1. sky dome gradient ---------------- */
+  /* ---------------- 1. sky dome gradient — WAVE 5 night grade ----------------
+     deep indigo zenith melting into an ember horizon, with a soft horizontal
+     glow band sitting behind the ridge line + dither so gradients stay smooth. */
   HogVisuals.skyTexture = function () {
     var c = mkCanvas(512, 512), ctx = c.getContext('2d');
     var g = ctx.createLinearGradient(0, 0, 0, 512);
-    g.addColorStop(0.00, '#0d0508'); // deep black-maroon zenith
-    g.addColorStop(0.45, '#1c0a06'); // dark blood-red
-    g.addColorStop(0.75, '#3a1608'); // burnt orange
-    g.addColorStop(1.00, '#6b2a0c'); // hot amber horizon glow
+    g.addColorStop(0.00, '#04040e'); // deep indigo zenith
+    g.addColorStop(0.28, '#090818'); // indigo
+    g.addColorStop(0.52, '#120a1e'); // violet-ink dusk
+    g.addColorStop(0.70, '#221016'); // violet -> ember transition
+    g.addColorStop(0.82, '#3a160a'); // burnt ember
+    g.addColorStop(0.93, '#6b2a0c'); // hot ember horizon
+    g.addColorStop(1.00, '#8a3c10'); // ember fire line at the ridge
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, 512, 512);
+    // horizon glow band riding INSIDE the ember horizon (warm core, no pale wash):
+    // warm core tucked against the ridge line, fading up — vulnerable to any
+    // pale tint, so every stop stays saturated ember until the last fade.
+    var glow = ctx.createRadialGradient(256, 500, 40, 256, 500, 300);
+    glow.addColorStop(0.0, 'rgba(255,138,46,0.22)');
+    glow.addColorStop(0.55, 'rgba(255,106,30,0.10)');
+    glow.addColorStop(1.0, 'rgba(255,106,30,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 380, 512, 132);
+    var band = ctx.createLinearGradient(0, 400, 0, 512);
+    band.addColorStop(0.0, 'rgba(255,120,40,0)');
+    band.addColorStop(0.62, 'rgba(255,118,36,0.12)');
+    band.addColorStop(1.0, 'rgba(255,132,44,0.22)');
+    ctx.fillStyle = band;
+    ctx.fillRect(0, 400, 512, 112);
     // banding-free dithering: semi-transparent noise pixels in matching hues
-    speckle(ctx, 512, 512, 700, ['#000000', '#6b2a0c', '#3a1608', '#1c0a06'], 0.02, 0.07, 2);
+    speckle(ctx, 512, 512, 750, ['#02020a', '#6b2a0c', '#2a0f14', '#120a1e', '#8a3c10'], 0.02, 0.06, 2);
     return new THREE.CanvasTexture(c);
   };
 
@@ -176,25 +196,40 @@
     return new THREE.CanvasTexture(c); // use with transparent:true, alphaTest:0.4, DoubleSide
   };
 
-  /* ---------------- 5. star field (upper hemisphere shell) ---------------- */
+  /* ---------------- 5. star field (upper hemisphere shell, 3 twinkle groups) —
+     returns a THREE.Group holding 3 Points clouds. game.js oscillates each
+     child's material.opacity for cheap twinkle; userData carries the params. */
   HogVisuals.starField = function () {
     var N = 900, R = 1400, Y_MIN = 120;
-    var pos = new Float32Array(N * 3);
-    for (var i = 0; i < N; i++) {
-      var y = Y_MIN + Math.random() * (R - Y_MIN);
-      var rFlat = Math.sqrt(Math.max(0, R * R - y * y));
-      var a = Math.random() * Math.PI * 2;
-      pos[i * 3] = Math.cos(a) * rFlat;
-      pos[i * 3 + 1] = y;
-      pos[i * 3 + 2] = Math.sin(a) * rFlat;
+    var GROUPS = 3;
+    var grp = new THREE.Group();
+    for (var gi = 0; gi < GROUPS; gi++) {
+      var n = Math.floor(N / GROUPS);
+      var pos = new Float32Array(n * 3);
+      for (var i = 0; i < n; i++) {
+        var y = Y_MIN + Math.random() * (R - Y_MIN);
+        var rFlat = Math.sqrt(Math.max(0, R * R - y * y));
+        var a = Math.random() * Math.PI * 2;
+        pos[i * 3] = Math.cos(a) * rFlat;
+        pos[i * 3 + 1] = y;
+        pos[i * 3 + 2] = Math.sin(a) * rFlat;
+      }
+      var geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      var mat = new THREE.PointsMaterial({
+        color: 0xfff4e0, size: 1.5, sizeAttenuation: false,
+        map: HogVisuals.softDotTexture(),
+        transparent: true, opacity: 0.85, fog: false, depthWrite: false,
+        alphaTest: 0.01
+      });
+      var pts = new THREE.Points(geo, mat);
+      pts.userData.base = 0.62 + gi * 0.13;               // per-group base brightness
+      pts.userData.amp = 0.18 + gi * 0.07;                // twinkle depth
+      pts.userData.speed = (0.7 + gi * 0.9) * (Math.random() < 0.5 ? 1 : 1.35);
+      pts.userData.phase = Math.random() * Math.PI * 2;
+      grp.add(pts);
     }
-    var geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    var mat = new THREE.PointsMaterial({
-      color: 0xfff4e0, size: 2.2, sizeAttenuation: false,
-      transparent: true, opacity: 0.85, fog: false, depthWrite: false
-    });
-    return new THREE.Points(geo, mat);
+    return grp;
   };
 
   /* ---------------- 6. soft round dust sprite (radial falloff, no hard square) ---------------- */

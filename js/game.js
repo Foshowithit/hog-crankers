@@ -40,21 +40,59 @@
   var V = window.HogVisuals || {};
 
   var scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x150b05);
-  scene.fog = new THREE.FogExp2(0x150b05, 0.0036);
+  scene.background = new THREE.Color(0x120a08);
+  scene.fog = new THREE.FogExp2(0x1c0e08, 0.0033);   /* ember dusk — melts ridges into the horizon band */
 
   var camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1600);
 
-  var hemi = new THREE.HemisphereLight(0xffa04d, 0x0a0d05, 0.85);
+  var hemi = new THREE.HemisphereLight(0xffa04d, 0x0a0d05, 0.8);
   scene.add(hemi);
-  var dir = new THREE.DirectionalLight(0xffb36b, 0.45);
+  var dir = new THREE.DirectionalLight(0xffb36b, 0.3);   /* ember bounce, dialed down for night */
   dir.position.set(60, 120, -80);
   scene.add(dir);
+  /* WAVE 5: cool dim steel-blue moonlight rim from the moon's direction */
+  var moonLight = new THREE.DirectionalLight(0x93a9d6, 0.5);
+  moonLight.position.set(160, 175, 800);
+  scene.add(moonLight);
+
+  /* ---------------- WAVE 5 post-processing (desktop only; phones ride clean) ----------------
+     RenderPass -> UnrealBloom (neon sign / skull moon / taillights / headlights / stars glow;
+     road, corn, ground stay matte) -> GammaCorrection (r128 trap: with EffectComposer the
+     renderer's outputEncoding never reaches the final buffer — this pass IS the sRGB write)
+     -> FXAA (composer render targets have no MSAA). */
+  var composer = null, bloomPass = null, fxaaPass = null, postOn = false;
+  if (!IS_TOUCH && THREE.EffectComposer && THREE.UnrealBloomPass && THREE.GammaCorrectionShader && THREE.FXAAShader) {
+    try {
+      composer = new THREE.EffectComposer(renderer);
+      composer.addPass(new THREE.RenderPass(scene, camera));
+      bloomPass = new THREE.UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight), 0.7, 0.45, 0.72);
+      composer.addPass(bloomPass);
+      composer.addPass(new THREE.ShaderPass(THREE.GammaCorrectionShader));
+      fxaaPass = new THREE.ShaderPass(THREE.FXAAShader);
+      composer.addPass(fxaaPass);
+      postOn = true;
+    } catch (err) { composer = null; postOn = false; }
+  }
+  function setPostSize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (composer) composer.setSize(w, h);
+    if (fxaaPass) {
+      var pr = renderer.getPixelRatio();
+      fxaaPass.material.uniforms.resolution.value.set(1 / (w * pr), 1 / (h * pr));
+    }
+  }
+  if (postOn) setPostSize();
+  function renderFrame() {
+    if (postOn && composer) composer.render();
+    else renderer.render(scene, camera);
+  }
 
   window.addEventListener('resize', function () {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    setPostSize();
   });
 
   /* ---------------- texture helpers ---------------- */
@@ -134,6 +172,16 @@
     scene.add(sp);
     return sp;
   })();
+  /* WAVE 5 muse swap-in: assets/moon-skull.jpg (2048x1024 art on black) replaces the
+     canvas moon. Additive blending = black vanishes into the sky; 2:1 aspect kept.
+     404 -> canvas moon stays (same graceful pattern as the gas-station sign). */
+  new THREE.TextureLoader().load('assets/moon-skull.jpg', function (t) {
+    t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    moon.material.map = srgb(t);
+    moon.material.blending = THREE.AdditiveBlending;
+    moon.material.needsUpdate = true;
+    moon.scale.set(560, 280, 1);
+  });
 
   /* ---------------- sky dome + stars ---------------- */
   var skyDome = new THREE.Mesh(
@@ -146,6 +194,59 @@
   scene.add(skyDome);
   var stars = V.starField ? V.starField() : null;
   if (stars) scene.add(stars);
+  /* WAVE 5: twinkle — oscillate each star group's opacity in the render loop */
+  var starGroups = (stars && stars.children) ? stars.children : [];
+
+  /* WAVE 5: shooting star — small pooled streak sprite, fires every 8-20s */
+  var shootPool = (function () {
+    var c = makeCanvas(128, 16), g = c.getContext('2d');
+    var lg = g.createLinearGradient(0, 0, 128, 0);
+    lg.addColorStop(0.0, 'rgba(255,240,210,0)');
+    lg.addColorStop(0.75, 'rgba(255,235,200,0.85)');
+    lg.addColorStop(1.0, 'rgba(255,255,240,1)');
+    g.fillStyle = lg;
+    g.fillRect(0, 0, 128, 16);
+    var tex = srgb(new THREE.CanvasTexture(c));
+    var pool = [];
+    for (var i = 0; i < 3; i++) {
+      var sp = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: tex, transparent: true, opacity: 0, fog: false, depthWrite: false,
+        blending: THREE.AdditiveBlending
+      }));
+      sp.scale.set(110, 5, 1);
+      sp.visible = false;
+      scene.add(sp);
+      pool.push({ sp: sp, vx: 0, vy: 0, life: 0, max: 1 });
+    }
+    return pool;
+  })();
+  var shootTimer = rand(4, 9);
+  function fireShootingStar(zBase) {
+    var s = null;
+    for (var i = 0; i < shootPool.length; i++) if (!shootPool[i].sp.visible) { s = shootPool[i]; break; }
+    if (!s) return;
+    var x = zBase !== undefined ? rand(-750, 750) : rand(-500, 500);
+    s.sp.position.set(x, rand(280, 520), (zBase || 0) + rand(320, 980));
+    s.vx = rand(420, 780) * (Math.random() < 0.5 ? -1 : 1);
+    s.vy = rand(-170, -70);
+    s.life = 0; s.max = rand(0.9, 1.4);
+    s.sp.material.rotation = Math.atan2(s.vy, s.vx);
+    s.sp.visible = true;
+  }
+  function updateShootingStars(dt) {
+    shootTimer -= dt;
+    if (shootTimer <= 0) { fireShootingStar(game ? game.z : 0); shootTimer = rand(8, 20); }
+    for (var i = 0; i < shootPool.length; i++) {
+      var s = shootPool[i];
+      if (!s.sp.visible) continue;
+      s.life += dt;
+      s.sp.position.x += s.vx * dt;
+      s.sp.position.y += s.vy * dt;
+      var k = s.life / s.max;
+      s.sp.material.opacity = k < 0.2 ? k / 0.2 : Math.max(0, 1 - (k - 0.2) / 0.8);
+      if (k >= 1) { s.sp.visible = false; s.sp.material.opacity = 0; }
+    }
+  }
 
   /* ---------------- ground ---------------- */
   var groundTex = V.groundTexture ? V.groundTexture() : null;
@@ -175,8 +276,10 @@
   }
   var roadMat = new THREE.MeshLambertMaterial({ color: 0x1b1b1e, map: asphaltTex || null });
   var dirtMat = new THREE.MeshLambertMaterial({ color: 0x171106, map: dirtTex || null });
-  var lineMat = new THREE.MeshBasicMaterial({ color: 0xcfc9b0 });
-  var edgeMat = new THREE.MeshBasicMaterial({ color: 0x8f8874 });
+  /* lane paint: Lambert — unlit except inside the headlight spots, so dashes/edges
+     read ONLY where the beam lands; dash color kept dim so bloom never catches it */
+  var lineMat = new THREE.MeshLambertMaterial({ color: 0x8f8a76 });
+  var edgeMat = new THREE.MeshLambertMaterial({ color: 0x8f8874 });
 
   var roadGeo = new THREE.PlaneGeometry(24, SEG_LEN);
   var dirtGeo = new THREE.PlaneGeometry(90, SEG_LEN);
@@ -387,11 +490,15 @@
     );
     sign.position.set(0, 13, 11);
     gasStation.add(sign);
-    /* neon: unlit sign + canopy light strip + one warm point light = night beacon */
-    var strip = new THREE.Mesh(new THREE.BoxGeometry(21, 0.14, 13), new THREE.MeshBasicMaterial({ color: 0xffb36b }));
+    /* neon: unlit sign + canopy light strip + one warm point light = night beacon.
+       Strip stays sub-threshold (no HDR): a 21x13 HDR surface at spawn range floods
+       the bloom mip chain and whites out the whole first view. The muse sign face
+       is the blooming beacon. */
+    var stripMat = new THREE.MeshBasicMaterial({ color: 0xffb36b });
+    var strip = new THREE.Mesh(new THREE.BoxGeometry(21, 0.14, 13), stripMat);
     strip.position.y = 6.32;
     gasStation.add(strip);
-    var glow = new THREE.PointLight(0xff9a4a, 1.15, 58);
+    var glow = new THREE.PointLight(0xffa050, 0.9, 52);   /* WAVE 5: warm night pool — 1.5/66 blew out the spawn view */
     glow.position.set(0, 6, 0);
     gasStation.add(glow);
   })();
@@ -406,20 +513,64 @@
     ['HONK IF UR A MFER', 'HELL YEAH']
   ];
   var billboards = [];
-  for (var bb = 0; bb < 4; bb++) {
+  for (var bb = 0; bb < 5; bb++) {
     var bgrp = new THREE.Group();
     var posts = new THREE.Mesh(new THREE.BoxGeometry(0.6, 8, 0.6), new THREE.MeshLambertMaterial({ color: 0x2b2018 }));
     posts.position.y = 4;
     bgrp.add(posts);
+    /* WAVE 5: Basic (not Lambert) — a billboard is backlit; art + canon copy stay
+       crisp under night lighting and the white/yellow copy kisses the bloom pass */
+    var faceMat = new THREE.MeshBasicMaterial({ map: signTexture(BILLBOARD_LINES[bb % BILLBOARD_LINES.length][0], BILLBOARD_LINES[bb % BILLBOARD_LINES.length][1], {}) });
+    /* BoxGeometry material order [px nx py ny pz nz]: art on the road-facing +z face
+       only; back/sides/top/bottom get a dark matte so grazing angles never smear
+       the face UV into a tan slab */
+    var slabDark = new THREE.MeshLambertMaterial({ color: 0x14100c });
     var face = new THREE.Mesh(
       new THREE.BoxGeometry(11, 6, 0.3),
-      new THREE.MeshLambertMaterial({ map: signTexture(BILLBOARD_LINES[bb % BILLBOARD_LINES.length][0], BILLBOARD_LINES[bb % BILLBOARD_LINES.length][1], {}) })
+      [slabDark, slabDark, slabDark, slabDark, faceMat, slabDark]
     );
     face.position.y = 10;
     bgrp.add(face);
     scene.add(bgrp);
-    billboards.push({ grp: bgrp, z: 420 + bb * 640 });
+    billboards.push({ grp: bgrp, z: 420 + bb * 640, faceMat: faceMat, lineIdx: bb % BILLBOARD_LINES.length });
   }
+  /* WAVE 5 muse swap-in: assets/billboard-1..5.jpg become the face BACKGROUND.
+     Composite = draw the loaded image into 512x256, scrim it, then draw the
+     EXISTING canon copy (BILLBOARD_LINES, untouched) on top -> CanvasTexture.
+     404 -> the canvas-only face above stays. Same fallback pattern as the sign. */
+  (function () {
+    function billboardArtTexture(img, lines) {
+      var c = makeCanvas(512, 256), g = c.getContext('2d');
+      var ir = img.width / img.height, cr = 512 / 256, dw, dh;
+      if (ir > cr) { dh = 256; dw = 256 * ir; } else { dw = 512; dh = 512 / ir; }
+      g.drawImage(img, (512 - dw) / 2, (256 - dh) / 2, dw, dh);
+      g.fillStyle = 'rgba(0,0,0,0.44)';              /* scrim so canon text stays readable */
+      g.fillRect(0, 0, 512, 256);
+      g.strokeStyle = '#d8ff00'; g.lineWidth = 14; g.strokeRect(10, 10, 492, 236);
+      g.textAlign = 'center';
+      g.fillStyle = '#f2ead8';
+      g.font = (lines[0].length > 14 ? 56 : 76) + 'px Impact, "Arial Black", sans-serif';
+      g.fillText(lines[0], 256, 128, 460);
+      g.fillStyle = '#d8ff00';
+      g.font = '38px Impact, "Arial Black", sans-serif';
+      g.fillText(lines[1], 256, 196, 460);
+      return srgb(new THREE.CanvasTexture(c));
+    }
+    var seen = {};
+    for (var i = 0; i < billboards.length; i++) {
+      var b = billboards[i], n = b.lineIdx + 1;
+      if (seen[n]) continue;                          /* one fetch per unique artwork */
+      seen[n] = true;
+      (function (bref, idx) {
+        new THREE.TextureLoader().load('assets/billboard-' + idx + '.jpg', function (t) {
+          var tex = billboardArtTexture(t.image, BILLBOARD_LINES[bref.lineIdx % BILLBOARD_LINES.length]);
+          tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+          bref.faceMat.map = tex;
+          bref.faceMat.needsUpdate = true;
+        });
+      })(b, n);
+    }
+  })();
   function placeBillboard(b) {
     var side = (Math.floor(b.z / 640) % 2 === 0) ? -1 : 1;
     b.grp.position.set(roadX(b.z) + side * 20, 0, b.z);
@@ -502,7 +653,9 @@
     var plate = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.14, 0.03), new THREE.MeshLambertMaterial({ color: 0xe8e0cc }));
     plate.position.set(0, 0.85, -1.52);
     g.add(plate);
-    var tail = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.06, 0.04), new THREE.MeshBasicMaterial({ color: 0xff2418 }));
+    var tailMat = new THREE.MeshBasicMaterial({ color: 0xff2418 });
+    tailMat.color.setRGB(3.4, 0.62, 0.45);   /* WAVE 5: white-hot core pushes the taillight over the bloom threshold */
+    var tail = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.06, 0.04), tailMat);
     tail.position.set(0, 0.98, -1.5);
     g.add(tail);
     g.userData.taillight = tail;
@@ -511,9 +664,11 @@
       pipe.rotation.x = Math.PI / 2 - 0.09;
       pipe.position.set(e === 0 ? -0.2 : 0.2, 0.62, -0.75);
       g.add(pipe);
+      var flameMat = new THREE.MeshBasicMaterial({ color: 0xff8c14, transparent: true, opacity: 0.95, fog: false });
+      flameMat.color.setRGB(3.2, 1.35, 0.32);   /* WAVE 5: HDR flame = boost moments bloom */
       var flame = new THREE.Mesh(
         new THREE.ConeGeometry(0.16, 1.6, 7),
-        new THREE.MeshBasicMaterial({ color: 0xff8c14, transparent: true, opacity: 0.95, fog: false })
+        flameMat
       );
       flame.rotation.x = Math.PI / 2;
       flame.position.set(e === 0 ? -0.2 : 0.2, 0.55, -1.9);
@@ -522,9 +677,11 @@
       if (!g.userData.flames) g.userData.flames = [];
       g.userData.flames.push(flame);
     }
+    var headMat = new THREE.MeshBasicMaterial({ color: 0xffe9b0 });
+    headMat.color.setRGB(2.6, 2.3, 1.6);   /* WAVE 5: brighter bulb -> headlight blooms */
     var head = new THREE.Mesh(
       new THREE.SphereGeometry(0.14, 8, 6),
-      new THREE.MeshBasicMaterial({ color: 0xffe9b0 })
+      headMat
     );
     head.position.set(0, 1.05, 1.05);
     g.add(head);
@@ -578,6 +735,60 @@
 
   var player = new THREE.Group();
   var playerBike = buildBike({ frame: 0x7a1616, lights: true });
+  /* WAVE 5 headlight: two pieces. (1) a SHORT additive cone = atmosphere haze only,
+     alpha 0 at BOTH ends, warm amber; (2) a radial light POOL lying on the tarmac ahead —
+     the pool is what sells "light on tarmac"; the cone must never read as geometry.
+     Geometry note (r128): ConeGeometry's side wall only; apex cap sits at local -h/2 and
+     rotation.x tips the axis toward +z. The apex/far silhouette reading is killed by
+     depthWrite:false + depthTest — the cone draws under everything solid. */
+  (function () {
+    var c = makeCanvas(64, 256), g = c.getContext('2d');
+    var lg = g.createLinearGradient(0, 0, 0, 256);     /* canvas top = UV v=1 = cone apex (at the lamp) */
+    lg.addColorStop(0.00, 'rgba(255,214,150,0)');      /* 0 at apex: no hot disc at the bulb */
+    lg.addColorStop(0.14, 'rgba(255,212,146,0.42)');
+    lg.addColorStop(0.42, 'rgba(255,202,134,0.13)');
+    lg.addColorStop(0.76, 'rgba(255,194,126,0.025)');
+    lg.addColorStop(1.00, 'rgba(255,190,120,0)');      /* 0 at the base rim: no hard elliptical edge */
+    g.fillStyle = lg;
+    g.fillRect(0, 0, 64, 256);
+    var coneMat = new THREE.MeshBasicMaterial({
+      map: srgb(new THREE.CanvasTexture(c)),
+      transparent: true, opacity: 0.045, fog: false,
+      blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, side: THREE.DoubleSide
+    });
+    var cone = new THREE.Mesh(new THREE.ConeGeometry(2.6, 12, 24, 1, true), coneMat);
+    /* apex on the lamp (0,1.05,1.05), axis tipped down; far end sinks under the road
+       (base center y -0.9) so the depth buffer clips the buried half. */
+    cone.rotation.x = -Math.PI / 2 + 0.10;
+    cone.position.set(0, 0.30, 6.95);
+    cone.renderOrder = 2;
+    /* hide when it can't read as a beam */
+    cone.onBeforeRender = function () {
+      var chase = (camMode !== 2);
+      var facing = Math.abs(((Math.atan2(camera.position.x - game.x, camera.position.z - game.z) + Math.PI * 2) % (Math.PI * 2)) - Math.PI);
+      cone.visible = chase || facing > 0.9;
+    };
+    playerBike.add(cone);
+    /* warm pool on the tarmac (the actual "light on road" read) */
+    var pc = makeCanvas(256, 256), pg = pc.getContext('2d');
+    var rg = pg.createRadialGradient(128, 150, 8, 128, 150, 122);
+    rg.addColorStop(0.00, 'rgba(255,208,142,0.55)');
+    rg.addColorStop(0.38, 'rgba(255,196,128,0.26)');
+    rg.addColorStop(0.72, 'rgba(255,186,116,0.09)');
+    rg.addColorStop(1.00, 'rgba(255,186,116,0)');
+    pg.fillStyle = rg;
+    pg.fillRect(0, 0, 256, 256);
+    var poolMat = new THREE.MeshBasicMaterial({
+      map: srgb(new THREE.CanvasTexture(pc)),
+      transparent: true, opacity: 0.85, fog: false,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    var pool = new THREE.Mesh(new THREE.PlaneGeometry(11, 20), poolMat);
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(0, 0.02, 11.5);                  /* tarmac z +1.5 .. +21.5 ahead */
+    pool.renderOrder = 4;
+    playerBike.add(pool);
+  })();
   var playerRider = buildRider({});
   player.add(playerBike);
   player.add(playerRider);
@@ -585,7 +796,7 @@
   playerLight.position.set(0, 2.4, 1.2);
   player.add(playerLight);
   scene.add(player);
-  window.HogDebug = { scene: scene, camera: camera };
+  window.HogDebug = { scene: scene, camera: camera, composer: composer, bloom: bloomPass };
 
   /* ---------------- exhaust dust particles ---------------- */
   var DUST_N = 90;
@@ -633,6 +844,135 @@
       if (p.life <= 0) dustPos[i * 3 + 1] = -50;
     }
     if (any) dustGeo.attributes.position.needsUpdate = true;
+  }
+
+  /* ---------------- WAVE 5: overcrank/release SPARK burst (pooled, no per-frame alloc) ---------------- */
+  var SPARK_N = 60;
+  var sparkGeo = new THREE.BufferGeometry();
+  var sparkPos = new Float32Array(SPARK_N * 3);
+  var sparkCol = new Float32Array(SPARK_N * 3);
+  var sparkVel = new Float32Array(SPARK_N * 3);
+  var sparkLife = new Float32Array(SPARK_N);
+  for (var spi = 0; spi < SPARK_N; spi++) { sparkPos[spi * 3 + 1] = -50; sparkLife[spi] = 0; }
+  sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
+  sparkGeo.setAttribute('color', new THREE.BufferAttribute(sparkCol, 3));
+  var sparkMat = new THREE.PointsMaterial({
+    size: 0.52, vertexColors: true, transparent: true, opacity: 0.95,
+    sizeAttenuation: true, depthWrite: false, fog: false,
+    map: V.softDotTexture ? srgb(V.softDotTexture()) : null,
+    blending: THREE.AdditiveBlending, alphaTest: 0.01
+  });
+  var sparks = new THREE.Points(sparkGeo, sparkMat);
+  sparks.frustumCulled = false;
+  scene.add(sparks);
+  var sparkCursor = 0;
+  function burstSparks(x, y, z, count, power) {
+    for (var n = 0; n < count; n++) {
+      var i = sparkCursor;
+      sparkCursor = (sparkCursor + 1) % SPARK_N;
+      var a = Math.random() * Math.PI * 2;
+      var up = rand(1.5, 5.2) * power;
+      var side = rand(1.2, 4.6) * power;
+      sparkVel[i * 3] = Math.cos(a) * side;
+      sparkVel[i * 3 + 1] = up;
+      sparkVel[i * 3 + 2] = Math.sin(a) * side * 0.6 - 2.2 * power;
+      sparkLife[i] = rand(0.3, 0.75);
+      sparkPos[i * 3] = x + rand(-0.2, 0.2);
+      sparkPos[i * 3 + 1] = y + rand(0, 0.25);
+      sparkPos[i * 3 + 2] = z + rand(-0.2, 0.2);
+      var hot = Math.random();                       /* orange -> yellow spread */
+      sparkCol[i * 3] = 1.6;
+      sparkCol[i * 3 + 1] = 0.55 + hot * 0.9;
+      sparkCol[i * 3 + 2] = 0.12 + (1 - hot) * 0.1;
+    }
+    sparkGeo.attributes.position.needsUpdate = true;
+    sparkGeo.attributes.color.needsUpdate = true;
+  }
+  function updateSparks(dt) {
+    var any = false;
+    for (var i = 0; i < SPARK_N; i++) {
+      if (sparkLife[i] <= 0) continue;
+      any = true;
+      sparkLife[i] -= dt;
+      sparkVel[i * 3 + 1] -= 13 * dt;                /* gravity bites fast — sparks arc down */
+      sparkPos[i * 3] += sparkVel[i * 3] * dt;
+      sparkPos[i * 3 + 1] += sparkVel[i * 3 + 1] * dt;
+      sparkPos[i * 3 + 2] += sparkVel[i * 3 + 2] * dt;
+      if (sparkLife[i] <= 0 || sparkPos[i * 3 + 1] < 0.03) { sparkLife[i] = 0; sparkPos[i * 3 + 1] = -50; }
+    }
+    if (any) sparkGeo.attributes.position.needsUpdate = true;
+  }
+
+  /* ---------------- WAVE 5: drifting embers near the station + roadside (pooled) ---------------- */
+  var EMBER_N = IS_TOUCH ? 40 : 80;
+  var emberGeo = new THREE.BufferGeometry();
+  var emberPos = new Float32Array(EMBER_N * 3);
+  var emberCol = new Float32Array(EMBER_N * 3);
+  var emberBase = new Float32Array(EMBER_N * 3);
+  var emberData = [];                                /* vy, drift, life, max, phase, flickHz */
+  for (var emi = 0; emi < EMBER_N; emi++) {
+    emberPos[emi * 3 + 1] = -50;
+    emberData.push({ life: 0, max: 1, vy: 0, dx: 0, dz: 0, phase: 0, hz: 1 });
+  }
+  emberGeo.setAttribute('position', new THREE.BufferAttribute(emberPos, 3));
+  emberGeo.setAttribute('color', new THREE.BufferAttribute(emberCol, 3));
+  var emberMat = new THREE.PointsMaterial({
+    size: 0.3, vertexColors: true, transparent: true,
+    sizeAttenuation: true, depthWrite: false, fog: false,
+    map: V.softDotTexture ? srgb(V.softDotTexture()) : null,
+    blending: THREE.AdditiveBlending, alphaTest: 0.01
+  });
+  var embers = new THREE.Points(emberGeo, emberMat);
+  embers.frustumCulled = false;
+  scene.add(embers);
+  var emberT = 0;
+  function respawnEmber(i, pz) {
+    var d = emberData[i];
+    var nearStation = Math.abs(pz - 30) < 300 && Math.random() < 0.45;
+    if (nearStation) {                               /* coals drifting off the GAS-N-GO */
+      emberPos[i * 3] = roadX(30) + rand(-15, 15);
+      emberPos[i * 3 + 1] = rand(0.4, 6.5);
+      emberPos[i * 3 + 2] = 30 + rand(-13, 13);
+    } else {                                         /* roadside embers riding the warm night air */
+      var zs = pz + rand(4, 165);
+      var side = Math.random() < 0.5 ? -1 : 1;
+      emberPos[i * 3] = roadX(zs) + side * rand(7, 30);
+      emberPos[i * 3 + 1] = rand(0.2, 2.4);
+      emberPos[i * 3 + 2] = zs;
+    }
+    d.max = rand(3.5, 7);
+    d.life = d.max;
+    d.vy = rand(0.35, 1.05);
+    d.dx = rand(-0.35, 0.35);
+    d.dz = rand(-0.5, 0.2);
+    d.phase = rand(0, Math.PI * 2);
+    d.hz = rand(1.5, 4);
+    var heat = rand(0.7, 1);
+    emberBase[i * 3] = 1.5 * heat;                   /* ember orange, HDR so they glow */
+    emberBase[i * 3 + 1] = 0.5 * heat;
+    emberBase[i * 3 + 2] = 0.1;
+  }
+  function updateEmbers(dt, pz) {
+    emberT += dt;
+    var posDirty = false;
+    for (var i = 0; i < EMBER_N; i++) {
+      var d = emberData[i];
+      d.life -= dt;
+      if (d.life <= 0 || emberPos[i * 3 + 2] < pz - 25 || emberPos[i * 3 + 2] > pz + 220) {
+        respawnEmber(i, pz);
+        posDirty = true;
+      }
+      emberPos[i * 3] += (d.dx + Math.sin(emberT * 0.9 + d.phase) * 0.3) * dt;
+      emberPos[i * 3 + 1] += d.vy * dt;
+      emberPos[i * 3 + 2] += d.dz * dt;
+      posDirty = true;
+      var f = 0.42 + 0.58 * (0.5 + 0.5 * Math.sin(emberT * d.hz + d.phase));  /* flicker */
+      emberCol[i * 3] = emberBase[i * 3] * f;
+      emberCol[i * 3 + 1] = emberBase[i * 3 + 1] * f;
+      emberCol[i * 3 + 2] = emberBase[i * 3 + 2] * f;
+    }
+    emberGeo.attributes.position.needsUpdate = posDirty;
+    emberGeo.attributes.color.needsUpdate = true;
   }
 
   /* ---------------- roadside skeleton crowd pool ---------------- */
@@ -783,8 +1123,10 @@
     quest.towBike = buildBike({ frame: 0x3a3a3a });
     quest.towBike.visible = false;
     scene.add(quest.towBike);
-    var ropeGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+    var ropeGeo = new THREE.BufferGeometry();
+    ropeGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
     quest.rope = new THREE.Line(ropeGeo, new THREE.LineBasicMaterial({ color: 0x35302a }));
+    quest.rope.frustumCulled = false;   /* points update in place; stale bounds would cull it */
     quest.rope.visible = false;
     scene.add(quest.rope);
     showQuestBanner(quest.data);
@@ -943,6 +1285,10 @@
     else if (crank.level >= 0.85) q = 'good';
     else q = 'late';
     audio.crankRelease(q);
+    /* WAVE 5: release sparks — the better the release, the fatter the burst */
+    if (q === 'perfect') burstSparks(game.x, 0.9, game.z - 1.4, 34, 1.5);
+    else if (q === 'good') burstSparks(game.x, 0.9, game.z - 1.4, 16, 1.0);
+    else burstSparks(game.x, 0.9, game.z - 1.4, 8, 0.7);
     if (q === 'perfect') {
       crank.chain = (crank.chainT > 0) ? crank.chain + 1 : 1;
       crank.chainT = 12;
@@ -982,6 +1328,7 @@
     el.combo.style.display = 'none';
     el.sweetzone.style.display = 'none';
     audio.crankOver();
+    burstSparks(game.x, 0.9, game.z - 1.4, 48, 2.2);   /* WAVE 5: blown-hog spark shower */
     if (voice) voice.event('overcrank');
     hideOverlay('gameover');
     showOverlay('gameover');
@@ -1080,14 +1427,40 @@
   }
 
   /* ---------------- main loop ---------------- */
+  var CAMS = [[0, 3.1, -7.4], [0, 5.6, -12.5], [0, 2.0, 0.9]];   /* camera rigs, module-scope: no per-frame alloc */
   var last = performance.now();
   var titleAng = 0;
+  /* WAVE 5 desktop auto-degrade: rolling fps over 120 frames, one-shot kill switch */
+  var fpsFrames = 0, fpsAccum = 0;
+
+  function updateSkyFX(now, dt, pz) {
+    if (starGroups.length) {                           /* cheap twinkle: per-group opacity sine */
+      var tt = now * 0.001;
+      for (var gi = 0; gi < starGroups.length; gi++) {
+        var sg = starGroups[gi];
+        sg.material.opacity = sg.userData.base + Math.sin(tt * sg.userData.speed + sg.userData.phase) * sg.userData.amp;
+      }
+    }
+    updateShootingStars(dt);
+    updateEmbers(dt, pz);
+  }
 
   function frame(now) {
     requestAnimationFrame(frame);
     var dt = clamp((now - last) / 1000, 0, 0.05);
     last = now;
-    if (paused) { renderer.render(scene, camera); return; }
+
+    if (document.hidden) {
+      /* background tab: throttled rAF clamps dt and would fake a low-fps reading —
+         never feed the degrade gate while hidden */
+      fpsFrames = 0; fpsAccum = 0;
+    } else if (fpsFrames < 120) { fpsAccum += dt; fpsFrames++; }
+    else if (postOn && composer && fpsAccum > 0 && (fpsFrames / fpsAccum) < 45) {
+      postOn = false;                                  /* one-shot degrade, silent */
+      fpsFrames = 0; fpsAccum = 0;
+    } else { fpsFrames = 0; fpsAccum = 0; }
+
+    if (paused) { renderFrame(); return; }
 
     if (mode === 'title') {
       titleAng += dt * 0.35;
@@ -1098,12 +1471,17 @@
       camera.position.set(cx, 2.6, cz);
       camera.lookAt(player.position.x, 1.2, player.position.z);
       moon.position.set(player.position.x + 220, 170, player.position.z + 750);
-      renderer.render(scene, camera);
+      updateSkyFX(now, dt, 30);
+      renderFrame();
       return;
     }
 
-    if (mode === 'ride' || mode === 'overcrank') updateRide(dt);
-    renderer.render(scene, camera);
+    if (mode === 'ride' || mode === 'overcrank') {
+      updateRide(dt);
+      updateSkyFX(now, dt, game.z);
+      updateSparks(dt);
+    }
+    renderFrame();
   }
 
   function updateRide(dt) {
@@ -1249,7 +1627,7 @@
     }
     for (var bi = 0; bi < billboards.length; bi++) {
       var b = billboards[bi];
-      while (b.z < game.z - 130) { b.z += 4 * 640; placeBillboard(b); }
+      while (b.z < game.z - 130) { b.z += 5 * 640; placeBillboard(b); }   /* stride = board count */
     }
     gasStation.position.set(roadX(30), 0, 30); // stays home; world slides past it
 
@@ -1344,8 +1722,10 @@
           quest.towBike.position.x = lerp(quest.towBike.position.x, tx2, 1 - Math.exp(-6 * dt));
           quest.towBike.position.z = lerp(quest.towBike.position.z, tz2, 1 - Math.exp(-8 * dt));
           quest.towBike.rotation.y = player.rotation.y;
-          var pts = [new THREE.Vector3(game.x, 0.8, game.z - 1.2), new THREE.Vector3(quest.towBike.position.x, 0.8, quest.towBike.position.z + 1.2)];
-          quest.rope.geometry.setFromPoints(pts);
+          var rp = quest.rope.geometry.attributes.position.array;
+          rp[0] = game.x; rp[1] = 0.8; rp[2] = game.z - 1.2;
+          rp[3] = quest.towBike.position.x; rp[4] = 0.8; rp[5] = quest.towBike.position.z + 1.2;
+          quest.rope.geometry.attributes.position.needsUpdate = true;
           el.objective.textContent = quest.data.objective;
           el.destdist.textContent = Math.max(0, Math.round(quest.destPos - game.z)) + ' M TO ' + quest.data.destination.name;
           if (quest.destPos - game.z < 11 && game.speed < 30) completeQuest();
@@ -1366,10 +1746,7 @@
     if (onGrass) shake += 0.1;
     var shX = (Math.random() - 0.5) * shake;
     var shY = (Math.random() - 0.5) * shake;
-    var camPos, lookY = 1.4;
-    if (camMode === 0) camPos = [0, 3.1, -7.4];
-    else if (camMode === 1) camPos = [0, 5.6, -12.5];
-    else { camPos = [0, 2.0, 0.9]; lookY = 1.6; }
+    var camPos = CAMS[camMode], lookY = (camMode === 2) ? 1.6 : 1.4;
     var back = camPos[2], up = camPos[1], lat = camPos[0];
     camera.position.set(
       game.x + lat + shX * 0.5,
