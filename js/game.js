@@ -1340,6 +1340,221 @@
     emberGeo.attributes.color.needsUpdate = true;
   }
 
+  /* ---------------- WAVE 11 STORM FRONT: a storm rolls over the farm country ----------------
+     Slow ~140s loop per ride: calm → building → storm → clearing → calm, with jitter.
+     - FogExp2 density breathes per phase (calm = shipped 0.0033; ember horizon keeps reading).
+     - Heat lightning in building/storm/clearing: scheduler hands a strike = 2-3 flickers
+       (flashScreen + hemi/moon spike); ~30% of strikes also build a transient sky bolt ahead.
+     - Rain: desktop-only THREE.Points streak field, storm phase only, one-shot degrade kill.
+     - Zero per-frame allocs in steady state: pooled drops, reused bolt mesh, cached vectors. */
+  var STORM = {
+    CALM_FOG: 0.0033,
+    DUR: { calm: 45, building: 25, storm: 45, clearing: 25 },       /* seconds, ±15% jitter each entry */
+    FOG: { calm: 0.0033, building: 0.0041, storm: 0.0052, clearing: 0.0038 },
+    RATE: { building: [4, 9], storm: [2.5, 5], clearing: [7, 12] }  /* seconds between strikes */
+  };
+  var weather = { phase: 'calm', t: 0, dur: STORM.DUR.calm, nextBolt: 8, boltT: 0, flicks: 0, toastShown: false };
+  function stormDur(phase) { return STORM.DUR[phase] * rand(0.85, 1.15); }
+  var HEMI_BASE = 0.8, MOON_BASE = 0.5;                       /* match bootstrap intensities */
+  var lightSpike = 0;                                         /* seconds of sky-light spike left */
+
+  /* Rain streak texture (POT 32x32 canvas, house pattern — same spirit as the sign canvases) */
+  function rainTexture() {
+    var c = makeCanvas(32, 32), g = c.getContext('2d');
+    g.clearRect(0, 0, 32, 32);
+    var grad = g.createLinearGradient(16, 2, 16, 30);
+    grad.addColorStop(0, 'rgba(170,180,200,0)');
+    grad.addColorStop(0.5, 'rgba(170,180,200,0.85)');
+    grad.addColorStop(1, 'rgba(170,180,200,0)');
+    g.strokeStyle = grad;
+    g.lineWidth = 2;
+    g.beginPath(); g.moveTo(16, 2); g.lineTo(16, 30); g.stroke();
+    return c;
+  }
+  /* WAVE 11: desktop-only rain field. Never created on the touch tier (punch 11: "rain w/ touch off"). */
+  var RAIN_N = 900, rainGeo = null, rainPos = null, rainVel = null, rain = null, rainOn = false, rainDead = false;
+  if (!IS_TOUCH) {
+    rainGeo = new THREE.BufferGeometry();
+    rainPos = new Float32Array(RAIN_N * 3);
+    rainVel = new Float32Array(RAIN_N);
+    for (var ri = 0; ri < RAIN_N; ri++) {
+      rainPos[ri * 3] = rand(-30, 30); rainPos[ri * 3 + 1] = rand(0, 30); rainPos[ri * 3 + 2] = rand(-30, 30);
+      rainVel[ri] = rand(24, 38);
+    }
+    rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
+    var rainMat = new THREE.PointsMaterial({
+      size: 1.1, transparent: true, opacity: 0.35, color: 0x8f9cb4,
+      sizeAttenuation: true, depthWrite: false, fog: false,
+      map: srgb(new THREE.CanvasTexture(rainTexture())),
+      blending: THREE.AdditiveBlending, alphaTest: 0.01
+    });
+    rain = new THREE.Points(rainGeo, rainMat);
+    rain.frustumCulled = false;
+    rain.visible = false;
+    scene.add(rain);
+  }
+
+  /* Transient sky bolt: ONE reused ribbon mesh (2 crossed planes), geometry rebuilt per strike,
+     disposed after. Pale bone-white with a cool edge — lightning is a natural phenomenon,
+     not a volt-brand moment. fog:false so it reads at 100+ units like the tower beacon. */
+  var boltMat = new THREE.MeshBasicMaterial({ color: 0xdfe4ee, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide });
+  var bolt = new THREE.Group();
+  var boltP1 = new THREE.Mesh(new THREE.BufferGeometry(), boltMat);
+  var boltP2 = new THREE.Mesh(new THREE.BufferGeometry(), boltMat);   /* cross-plane: verts baked in the z-y plane, no mesh rotation */
+  bolt.add(boltP1); bolt.add(boltP2);
+  bolt.visible = false;
+  scene.add(bolt);
+  var boltVec = new THREE.Vector3();                          /* reused scratch — no per-frame alloc */
+  var boltX = 0, boltZ = 0;                                   /* last strike ground position (for evidence poses) */
+  function buildBolt() {                                      /* geometry lives only during flickers */
+    var topY = rand(60, 90), segs = 8 + ((Math.random() * 5) | 0);
+    var bx = game.x + rand(-120, 120), bz = game.z + rand(60, 160);
+    bx = roadX(bz) + clamp(bx - roadX(bz), -140, 140);
+    var verts = new Float32Array((segs + 1) * 2 * 3);
+    var verts2 = new Float32Array((segs + 1) * 2 * 3);   /* cross-plane twin: same spine, depth in z */
+    var x = bx, y = topY, wdt = rand(0.6, 1.1);
+    for (var s = 0; s <= segs; s++) {
+      var f = s / segs;
+      var cy = topY + (-6 - topY) * f;   /* ground at y=-6: the strike lands BEHIND the ridge line */
+      if (s > 0 && s < segs) x += rand(-9, 9);
+      verts[s * 6] = x - wdt; verts[s * 6 + 1] = cy; verts[s * 6 + 2] = 0;
+      verts[s * 6 + 3] = x + wdt; verts[s * 6 + 4] = cy; verts[s * 6 + 5] = 0;
+      var zw = rand(0.6, 1.2);
+      verts2[s * 6] = x; verts2[s * 6 + 1] = cy; verts2[s * 6 + 2] = -zw;
+      verts2[s * 6 + 3] = x; verts2[s * 6 + 4] = cy; verts2[s * 6 + 5] = zw;
+    }
+    boltP1.geometry.dispose();
+    boltP1.geometry = new THREE.BufferGeometry();
+    var idx = [];
+    for (var q = 0; q < segs; q++) {
+      var a = q * 2, b = q * 2 + 1, c2 = q * 2 + 2, d = q * 2 + 3;
+      idx.push(a, b, c2, b, d, c2);
+    }
+    boltP1.geometry.setIndex(idx);
+    boltP1.geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    boltP2.geometry.dispose();
+    boltP2.geometry = new THREE.BufferGeometry();
+    boltP2.geometry.setIndex(idx.slice());
+    boltP2.geometry.setAttribute('position', new THREE.BufferAttribute(verts2, 3));
+    /* verts are baked in world x — the group carries only z (x offset 0, else x applies twice) */
+    bolt.position.set(0, 0, bz);
+    boltX = bx; boltZ = bz;
+    bolt.visible = true;
+    boltMat.opacity = 0.95;   /* visible immediately — the flicker spool only modulates while unpaused */
+  }
+  function killBolt() {
+    bolt.visible = false;
+    boltMat.opacity = 0;
+  }
+
+  /* A strike = 2-3 quick flickers over 0.15-0.3s. Each flicker: DOM flash + sky-light spike;
+     30% of strikes also raise a visible bolt for the whole flicker window. */
+  function strikeNow() {
+    weather.boltT = rand(0.15, 0.3);
+    weather.flicks = 2 + ((Math.random() * 2) | 0);
+    lightSpike = weather.boltT;
+    if (Math.random() < 0.3) buildBolt();
+    else killBolt();
+    return { phase: weather.phase, flicks: weather.flicks, bolt: bolt.visible };
+  }
+  function resetWeather() {
+    weather.phase = 'calm'; weather.t = 0; weather.dur = stormDur('calm');
+    weather.nextBolt = rand(6, 10); weather.boltT = 0; weather.flicks = 0;
+    weather.toastShown = false;
+    lightSpike = 0;
+    scene.fog.density = STORM.CALM_FOG;
+    hemi.intensity = HEMI_BASE; moonLight.intensity = MOON_BASE;
+    killBolt();
+    if (rain) { rain.visible = false; rainOn = false; }
+  }
+  window.HogWeather = {
+    state: function () { return { phase: weather.phase, t: +weather.t.toFixed(1), rain: rainOn, bolt: bolt.visible, bx: Math.round(boltX), bz: Math.round(boltZ), fog: +scene.fog.density.toFixed(5) }; },
+    force: function (phase) {
+      if (!STORM.DUR[phase]) return null;
+      weather.phase = phase; weather.t = 0; weather.dur = stormDur(phase);
+      weather.nextBolt = 0.01; weather.boltT = 0;
+      if (phase === 'storm' && !weather.toastShown) {
+        weather.toastShown = true;
+        toast('STORM FRONT', 'ROLLING THUNDER, BROTHER. CRANK THROUGH IT.');
+      }
+      return window.HogWeather.state();
+    },
+    strikeNow: strikeNow
+  };
+
+  /* WAVE 11 per-frame: phase clock, fog breathing, bolt scheduler + flicker spool, rain fall. */
+  var rainCam = new THREE.Vector3();                          /* scratch — no per-frame alloc */
+  function updateWeather(dt) {
+    weather.t += dt;
+    if (weather.t >= weather.dur) {
+      weather.phase = weather.phase === 'calm' ? 'building'
+        : weather.phase === 'building' ? 'storm'
+        : weather.phase === 'storm' ? 'clearing' : 'calm';
+      weather.t = 0;
+      weather.dur = stormDur(weather.phase);
+      var win = STORM.RATE[weather.phase];
+      weather.nextBolt = win ? rand(win[0], win[1]) : rand(6, 10);
+      if (weather.phase === 'storm' && !weather.toastShown) {
+        weather.toastShown = true;
+        toast('STORM FRONT', 'ROLLING THUNDER, BROTHER. CRANK THROUGH IT.');
+      }
+    }
+    /* fog breathes toward the phase target */
+    var target = STORM.FOG[weather.phase];
+    scene.fog.density = lerp(scene.fog.density, target, 1 - Math.exp(-0.5 * dt));
+
+    /* bolt scheduler (building/storm/clearing only) */
+    var win2 = STORM.RATE[weather.phase];
+    if (win2 && weather.boltT <= 0) {
+      weather.nextBolt -= dt;
+      if (weather.nextBolt <= 0) {
+        strikeNow();
+        var w = STORM.RATE[weather.phase];
+        weather.nextBolt = rand(w[0], w[1]);
+      }
+    }
+    /* flicker spool: flash + light spike ride the bolt window (~50ms alternation) */
+    if (weather.boltT > 0) {
+      weather.boltT -= dt;
+      var on = (((weather.boltT * 20) | 0) % 2 === 0);
+      if (on) {
+        flashScreen(rand(0.10, 0.22).toFixed(2));
+        boltMat.opacity = 0.95;
+      } else boltMat.opacity = 0.15;
+      if (weather.boltT <= 0) killBolt();
+    } else if (boltMat.opacity > 0) boltMat.opacity = 0;
+
+    /* sky-light spike: hemi + moonride the bolt window, then restore */
+    if (lightSpike > 0) {
+      lightSpike -= dt;
+      hemi.intensity = HEMI_BASE * 2.2;
+      moonLight.intensity = MOON_BASE * 2.2;
+      if (lightSpike <= 0) { hemi.intensity = HEMI_BASE; moonLight.intensity = MOON_BASE; }
+    }
+
+    /* rain: storm phase only, desktop only, one-shot degrade kill */
+    var wantRain = (weather.phase === 'storm' && rain && !rainDead);
+    if (rain) {
+      if (wantRain && !rainOn) { rainOn = true; rain.visible = true; }
+      else if (!wantRain && rainOn) { rainOn = false; rain.visible = false; }
+      if (rainOn) {
+        camera.getWorldPosition(rainCam);
+        for (var i = 0; i < RAIN_N; i++) {
+          var ny = rainPos[i * 3 + 1] - rainVel[i] * dt;
+          if (ny < 0) {
+            ny = 30;
+            rainPos[i * 3] = rainCam.x + rand(-30, 30);
+            rainPos[i * 3 + 2] = rainCam.z + rand(-30, 30);
+          }
+          rainPos[i * 3 + 1] = ny;
+        }
+        rainGeo.attributes.position.needsUpdate = true;
+        rain.position.set(0, 0, 0);
+      }
+    }
+  }
+
   /* ---------------- roadside skeleton crowd pool ---------------- */
   function buildSkeleton() {
     var g = new THREE.Group();
@@ -1952,6 +2167,7 @@
     quest.active = false; quest.state = 'none'; quest.timer = 8;
     removeQuestActors();
     clearQuestTimers();
+    resetWeather();   /* WAVE 11: every ride starts calm — the storm rolls in on its own clock */
     el.questbanner.style.display = 'none';
     el.questsub.style.display = 'none';
     el.objective.style.display = 'none';
@@ -1991,8 +2207,14 @@
          never feed the degrade gate while hidden */
       fpsFrames = 0; fpsAccum = 0;
     } else if (fpsFrames < 120) { fpsAccum += dt; fpsFrames++; }
-    else if (postOn && composer && fpsAccum > 0 && (fpsFrames / fpsAccum) < 45) {
-      postOn = false;                                  /* one-shot degrade, silent */
+    else if (fpsAccum > 0 && (fpsFrames / fpsAccum) < 45) {
+      /* WAVE 5: one-shot composer degrade + WAVE 11: one-shot rain kill (storm is the
+         heaviest frame cost on desktop — if the machine can't hold 45, rain goes first) */
+      if (postOn && composer) postOn = false;
+      if (typeof rainDead !== 'undefined' && !rainDead && typeof rain !== 'undefined' && rain) {
+        rainDead = true;
+        if (typeof rainOn !== 'undefined' && rainOn) { rainOn = false; rain.visible = false; }
+      }
       fpsFrames = 0; fpsAccum = 0;
     } else { fpsFrames = 0; fpsAccum = 0; }
 
@@ -2014,6 +2236,7 @@
 
     if (mode === 'ride' || mode === 'overcrank') {
       updateRide(dt);
+      updateWeather(dt);   /* WAVE 11 STORM FRONT clock — fog, lightning, rain */
       updateSkyFX(now, dt, game.z);
       updateSparks(dt);
     }
