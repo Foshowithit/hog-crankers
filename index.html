@@ -176,6 +176,18 @@
     background:radial-gradient(ellipse at center, transparent 58%, rgba(0,0,0,.5) 100%);}
   #flash{position:fixed;inset:0;z-index:70;pointer-events:none;background:#fffbe0;opacity:0;}
 
+  /* WAVE 12 cinebars: cinematic letterbox for the title flyby. Pure black, 11% height,
+     z-index between canvas/HUD and #title so the logo + difficulty buttons stay fully
+     visible and clickable; pointer-events none. game.js slides them in on flyby start,
+   retracts on settle/skip, and startGame() hides them instantly — no bars in gameplay. */
+  .cinebar{position:fixed;left:0;right:0;height:11%;background:#000;z-index:62;
+    pointer-events:none;display:none;transition:transform .9s cubic-bezier(.4,0,.2,1);}
+  #cinebarTop{top:0;transform:translateY(-101%);}
+  #cinebarBot{bottom:0;transform:translateY(101%);}
+  /* the on-state needs ID specificity to beat the ID hidden-state transforms above
+     (w12 judge catch: .cinebar.cineon = 0-2-0 lost to #id = 1-0-0, bars never showed) */
+  #cinebarTop.cineon,#cinebarBot.cineon{transform:translateY(0);}
+
   /* ---------- rotate overlay (touch devices in portrait) ---------- */
   #rotateov{
     position:fixed;inset:0;z-index:120;display:none;
@@ -245,12 +257,25 @@
     #arooline{font-size:12px;}
     body:not(.hog-touch) #combo{right:14px;bottom:90px;font-size:30px;}
   }
+  /* WAVE 12 judge fix: short landscape (phone 844x390) centered the title stack and
+     beheaded the logo ~42px off the top — pin to top and compact the stack so the
+     whole menu fits inside 390px with the logo fully on-screen */
+  @media (max-height:480px){
+    #title{justify-content:flex-start;padding-top:max(14px, env(safe-area-inset-top));gap:8px;}
+    #title h1{font-size:clamp(34px,9vw,60px);}
+    #tagline{font-size:13px;letter-spacing:3px;}
+    .diffbtn{min-width:min(84vw,300px);padding:8px 14px 7px;}
+    .diffbtn .dname{font-size:18px;}
+    #titlehint{font-size:13px;}
+  }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
 <div id="vignette"></div>
 <div id="flash"></div>
+<div id="cinebarTop" class="cinebar"></div>
+<div id="cinebarBot" class="cinebar"></div>
 
 <div id="loading">
   <h1 class="slant">LOADING BADASS SHIT<br>PLEASE HOLD ON MFER</h1>
@@ -325,22 +350,22 @@
 
 <script src="three.min.js"></script>
 <!-- WAVE 5 NIGHT ENGINE: r128 post-processing, vendored locally (non-module THREE.* globals) -->
-<script src="js/post/shaders/CopyShader.js?v=20260915g"></script>
-<script src="js/post/shaders/LuminosityHighPassShader.js?v=20260915g"></script>
-<script src="js/post/shaders/GammaCorrectionShader.js?v=20260915g"></script>
-<script src="js/post/shaders/FXAAShader.js?v=20260915g"></script>
-<script src="js/post/postprocessing/EffectComposer.js?v=20260915g"></script>
-<script src="js/post/postprocessing/RenderPass.js?v=20260915g"></script>
-<script src="js/post/postprocessing/ShaderPass.js?v=20260915g"></script>
-<script src="js/post/postprocessing/MaskPass.js?v=20260915g"></script>
-<script src="js/post/postprocessing/UnrealBloomPass.js?v=20260915g"></script>
-<script src="js/audio.js?v=20260915g"></script>
-<script src="js/visuals.js?v=20260915g"></script>
-<script src="js/quests.js?v=20260915g"></script>
-<script src="js/voice.js?v=20260915g"></script>
-<script src="js/voicepack.js?v=20260915g"></script>
-<script src="js/music.js?v=20260915g"></script>
-<script src="js/game.js?v=20260915g"></script>
-<script src="js/touch.js?v=20260915g"></script>
+<script src="js/post/shaders/CopyShader.js?v=20260915h"></script>
+<script src="js/post/shaders/LuminosityHighPassShader.js?v=20260915h"></script>
+<script src="js/post/shaders/GammaCorrectionShader.js?v=20260915h"></script>
+<script src="js/post/shaders/FXAAShader.js?v=20260915h"></script>
+<script src="js/post/postprocessing/EffectComposer.js?v=20260915h"></script>
+<script src="js/post/postprocessing/RenderPass.js?v=20260915h"></script>
+<script src="js/post/postprocessing/ShaderPass.js?v=20260915h"></script>
+<script src="js/post/postprocessing/MaskPass.js?v=20260915h"></script>
+<script src="js/post/postprocessing/UnrealBloomPass.js?v=20260915h"></script>
+<script src="js/audio.js?v=20260915h"></script>
+<script src="js/visuals.js?v=20260915h"></script>
+<script src="js/quests.js?v=20260915h"></script>
+<script src="js/voice.js?v=20260915h"></script>
+<script src="js/voicepack.js?v=20260915h"></script>
+<script src="js/music.js?v=20260915h"></script>
+<script src="js/game.js?v=20260915h"></script>
+<script src="js/touch.js?v=20260915h"></script>
 </body>
 </html>
