@@ -578,6 +578,122 @@
   }
   billboards.forEach(placeBillboard);
 
+  /* ---------------- WAVE 8: roadside landmarks — DED HOG DINER / HOG BARN / water tower ----------------
+     Facade art lives on the -z face (material index 5) yawed toward the road: an approaching rider
+     looks toward +z, so the -z face is the one that greets him (mirrored billboard convention —
+     verified by live quaternion probe). Diner face = MeshBasicMaterial (self-lit neon -> blooms);
+     barn/tower stay Lambert-dim so they read matte moonlit and sit under the 0.72 bloom threshold.
+     Fixed sides, alternating vs the billboard beats (boards sit at z = 420 mod 640), and each
+     landmark recycles on its own 6400 stride with the billboard `while z < game.z - 130` idiom —
+     one landmark roughly every half-minute of riding, none near the gas station (z 30). */
+  var LANDMARK_SPAN = 6400;
+  var landmarks = [];
+  function placeLandmark(l) {
+    l.grp.position.set(roadX(l.z) + l.off, 0, l.z);
+    l.grp.rotation.y = l.yaw;
+  }
+
+  /* --- DED HOG DINER (the star): low wide box, chrome roof edge, warm glow at the door --- */
+  var diner = new THREE.Group();
+  (function () {
+    var faceMat = new THREE.MeshBasicMaterial({ color: 0x0f0d0a });     /* 404 fallback: dark face */
+    new THREE.TextureLoader().load('assets/ded-hog-diner.jpg', function (t) {
+      t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      faceMat.map = srgb(t);
+      faceMat.color.setRGB(1.3, 1.3, 1.2);   /* map x color: HDR lift so the neon strokes cross the
+                                                 bloom threshold at distance (taillight trick) */
+      faceMat.needsUpdate = true;
+    });
+    var body = new THREE.Mesh(
+      new THREE.BoxGeometry(18, 9, 12),
+      [slabDark, slabDark, slabDark, slabDark, slabDark, faceMat]       /* art on -z (road-facing) */
+    );
+    body.position.y = 4.5;
+    diner.add(body);
+    /* chrome roof edge: moonlit rim keeps the silhouette readable at distance */
+    var trim = new THREE.Mesh(new THREE.BoxGeometry(18.6, 0.28, 12.6), new THREE.MeshLambertMaterial({ color: 0x878d94 }));
+    trim.position.y = 9.06;
+    diner.add(trim);
+    var pad = new THREE.Mesh(new THREE.BoxGeometry(24, 0.2, 17), new THREE.MeshLambertMaterial({ color: 0x191b1f }));
+    pad.position.y = 0.1;
+    diner.add(pad);
+    var glow = new THREE.PointLight(0xffa050, 0.85, 46);                /* same doctrine as the GAS-N-GO pool */
+    glow.position.set(0, 3.4, -9.5);                                    /* local -z = road side */
+    diner.add(glow);
+  })();
+  scene.add(diner);
+  landmarks.push({ grp: diner, z: 1250, off: 28, yaw: 0.5 });
+
+  /* --- HOG BARN: big flat facade wall, moonlit matte ghost-hog mural (opposite side from the diner) --- */
+  var barn = new THREE.Group();
+  var barnMat = new THREE.MeshLambertMaterial({ color: 0x1c1310 });     /* fallback: dark timber */
+  new THREE.TextureLoader().load('assets/hog-barn.jpg', function (t) {
+    t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    t.repeat.y = 0.854;                     /* crop the baked ember-sky band off the mural's top */
+    barnMat.map = srgb(t);
+    barnMat.color.setHex(0xffffff);         /* mapped: full art, Lambert keeps it matte moonlit */
+    barnMat.needsUpdate = true;
+  });
+  var barnWall = new THREE.Mesh(
+    new THREE.BoxGeometry(20, 9, 3),
+    [slabDark, slabDark, slabDark, slabDark, slabDark, barnMat]
+  );
+  barnWall.position.y = 4.5;
+  barn.add(barnWall);
+  scene.add(barn);
+  landmarks.push({ grp: barn, z: 2560, off: -27, yaw: -0.5 });
+
+  /* --- WATER TOWER: the jpg is a frontal shot on baked sky (unusable as a plane), so the tower is
+     a dark 3D silhouette that matches the ridges; only the tank barrel band is mapped, on a
+     partial-arc sleeve hugging the tank (aspect-true), plus a volt crown beacon that kisses the
+     bloom threshold like the art's lamp. --- */
+  var tower = new THREE.Group();
+  (function () {
+    var steel = new THREE.MeshLambertMaterial({ color: 0x0d0a08 });
+    var legGeo = new THREE.CylinderGeometry(0.16, 0.27, 11.4, 5);
+    var lean = 0.155, lxi, lzi, leg;
+    for (lzi = -1; lzi <= 1; lzi += 2) {
+      for (lxi = -1; lxi <= 1; lxi += 2) {
+        leg = new THREE.Mesh(legGeo, steel);
+        leg.position.set(lxi * 3.42, 5.5, lzi * 3.42);
+        leg.rotation.z = lean * lxi;                  /* tops converge under the tank */
+        leg.rotation.x = -lean * lzi;
+        tower.add(leg);
+      }
+    }
+    var tank = new THREE.Mesh(new THREE.CylinderGeometry(4.2, 4.2, 7.5, 18), steel);
+    tank.position.y = 14.35;
+    tower.add(tank);
+    var cap = new THREE.Mesh(new THREE.ConeGeometry(4.45, 2.1, 18), steel);
+    cap.position.y = 19.15;
+    tower.add(cap);
+    /* barrel-art sleeve: 126-degree arc centered on the road-facing side, crop ≈ square pixels */
+    var barrelMat = new THREE.MeshLambertMaterial({ color: 0x181310 }); /* fallback: plain steel */
+    new THREE.TextureLoader().load('assets/water-tower.jpg', function (t) {
+      t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      t.offset.set(0.364, 0.429);
+      t.repeat.set(0.254, 0.371);
+      barrelMat.map = srgb(t);
+      barrelMat.color.setHex(0xffffff);
+      barrelMat.needsUpdate = true;
+    });
+    var sleeve = new THREE.Mesh(
+      new THREE.CylinderGeometry(4.28, 4.28, 6.9, 12, 1, true, Math.PI - 1.1, 2.2),
+      barrelMat
+    );
+    sleeve.position.y = 14.15;
+    tower.add(sleeve);
+    /* crown beacon: tiny volt dot pushed over the bloom threshold — the art's crown lamp */
+    var beacon = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), new THREE.MeshBasicMaterial({ color: 0xd8ff00 }));
+    beacon.material.color.setRGB(1.1, 1.7, 0.35);
+    beacon.position.y = 20.55;
+    tower.add(beacon);
+  })();
+  scene.add(tower);
+  landmarks.push({ grp: tower, z: 3860, off: 30, yaw: 0.35 });
+
+  landmarks.forEach(placeLandmark);
+
   /* ---------------- bike factory ---------------- */
   function buildBike(opts) {
     opts = opts || {};
@@ -1631,6 +1747,10 @@
     for (var bi = 0; bi < billboards.length; bi++) {
       var b = billboards[bi];
       while (b.z < game.z - 130) { b.z += 5 * 640; placeBillboard(b); }   /* stride = board count */
+    }
+    for (var lm = 0; lm < landmarks.length; lm++) {
+      var lmk = landmarks[lm];
+      while (lmk.z < game.z - 130) { lmk.z += LANDMARK_SPAN; placeLandmark(lmk); }   /* WAVE 8: one lap every few minutes */
     }
     gasStation.position.set(roadX(30), 0, 30); // stays home; world slides past it
 
