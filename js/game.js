@@ -2182,8 +2182,11 @@
   var CAMS = [[0, 3.1, -7.4], [0, 5.6, -12.5], [0, 2.0, 0.9]];   /* camera rigs, module-scope: no per-frame alloc */
   var last = performance.now();
   var titleAng = 0;
-  /* WAVE 5 desktop auto-degrade: rolling fps over 120 frames, one-shot kill switch */
-  var fpsFrames = 0, fpsAccum = 0;
+  /* WAVE 5 desktop auto-degrade: rolling fps over 120 frames, one-shot kill switch.
+     WAVE 11 live-smoke fix: the gate now samples ONLY ride frames after a 2s warmup —
+     cold-load title frames (shader-compile stalls) averaged <45fps and one-shot killed
+     composer+rain for the whole session before the ride ever started. */
+  var fpsFrames = 0, fpsAccum = 0, rideWarm = 0;
 
   function updateSkyFX(now, dt, pz) {
     if (starGroups.length) {                           /* cheap twinkle: per-group opacity sine */
@@ -2205,6 +2208,11 @@
     if (document.hidden) {
       /* background tab: throttled rAF clamps dt and would fake a low-fps reading —
          never feed the degrade gate while hidden */
+      fpsFrames = 0; fpsAccum = 0;
+    } else if (mode !== 'ride' && mode !== 'overcrank') {
+      fpsFrames = 0; fpsAccum = 0;                     /* title/pause frames don't count */
+    } else if (rideWarm < 2) {
+      rideWarm += dt;                                  /* first 2s of a ride: compiles settle */
       fpsFrames = 0; fpsAccum = 0;
     } else if (fpsFrames < 120) { fpsAccum += dt; fpsFrames++; }
     else if (fpsAccum > 0 && (fpsFrames / fpsAccum) < 45) {
