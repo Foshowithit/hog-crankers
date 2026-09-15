@@ -1023,6 +1023,8 @@
       GEO.head = new THREE.SphereGeometry(0.14, 8, 6);
       GEO.housing = new THREE.CylinderGeometry(0.16, 0.13, 0.14, 8);
       GEO.mirror = new THREE.SphereGeometry(0.07, 6, 5);
+      GEO.standLeg = new THREE.BoxGeometry(0.07, 0.62, 0.07);   /* WAVE 16 KICKSTAND */
+      GEO.standFoot = new THREE.BoxGeometry(0.16, 0.05, 0.24);
     }
     return GEO;
   }
@@ -1185,6 +1187,28 @@
     housing.rotation.x = Math.PI / 2;
     housing.position.set(0, 1.05, 0.98);
     g.add(housing);
+    /* WAVE 16 KICKSTAND: side-stand leg + foot, dark metal (Lambert, no emissive,
+       below the bloom threshold). Mount under the engine on the camera side (-x);
+       deployed pose plants the foot ~0.3 outboard with the leg ~28 deg off vertical
+       (rotation.z ~ -0.49: top inboard at the frame, foot outboard on the tarmac).
+       Stash pose swings up flush under the frame. userData.stand carries the leg +
+       foot + deployed/stash anchors for the per-frame pose driver. */
+    var standLeg = new THREE.Mesh(GEO.standLeg, MATS.eng);
+    standLeg.position.set(-0.305, 0.33, -0.29);
+    standLeg.rotation.z = -0.49;
+    standLeg.rotation.x = 0.03;
+    g.add(standLeg);
+    var standFoot = new THREE.Mesh(GEO.standFoot, MATS.eng);
+    standFoot.position.set(-0.45, 0.06, -0.30);
+    standFoot.rotation.y = 0.12;
+    g.add(standFoot);
+    g.userData.stand = { leg: standLeg, foot: standFoot,
+      depX: -0.305, depY: 0.33, depZ: -0.29, depRz: -0.49,
+      stashX: -0.14, stashY: 0.55, stashZ: -0.28, stashRz: -0.05,
+      footDepX: -0.45, footDepY: 0.06, footDepZ: -0.30,
+      footStashX: -0.155, footStashY: 0.24, footStashZ: -0.28 };
+    g.userData.standT = 1;   /* 1 = deployed at rest, 0 = tucked for the ride */
+    if (!opts.lights) { standLeg.visible = false; standFoot.visible = false; }   /* w16 judge: NPC bikes ride, never park — stand is player-only */
     if (opts.lights) {
       var spot = new THREE.SpotLight(0xffe0b0, 0.5, 40, 0.3, 0.6, 1.6);
       spot.position.set(0, 1.05, 1.0);
@@ -1367,6 +1391,99 @@
   player.add(playerLight);
   scene.add(player);
   window.HogDebug = { scene: scene, camera: camera, composer: composer, bloom: bloomPass };
+  /* WAVE 16 KICKSTAND: rest-state drive, module scope (zero per-frame alloc).
+     Rest = the player bike sits parked AND visible: title orbit/flyby (mode 'title',
+     always parked at spawn) + any ride state with speed ~0 and nobody working
+     (ride-start pre-crank idle, coasted-to-stop, overcrank decay tail). Cranking is
+     commitment: crank.active forces the tuck the moment the crank starts, so the
+     stand is stashed by the time the speedo climbs. NOT gated on IS_TOUCH — the
+     stand is two cheap boxes and ships on both tiers. Lean target ~5° (0.087 rad)
+     ONTO the stand (-x side down = +z-rotation); the player origin sits at y=0 on
+     the tire contact line so the roll pivots about the rubber — the foot kisses
+     the tarmac by the same rotation while the tires stay grounded, no floating
+     tilt. standT lerps ~0.4s (rate 2.5/s both ways, never a pop). Idle life:
+     high-freq low-amplitude engine shake (sin 31Hz x 0.004 on bike y +
+     counter-phase whisper on the rider) + occasional exhaust puff through the
+     existing dust pool every ~1.4s. */
+  var standT = 1, standTgt = 1, puffT = 0.8, idleT = 0;
+  var STAND_LEAN = 0.087;
+  var KS_SCRATCH = new THREE.Vector3();   /* on-demand probe scratch: never touched per-frame */
+  function kickstandRest() {
+    if (typeof crank !== 'undefined' && crank.active) return false;   /* cranking = commitment, stand tucks now */
+    return (typeof mode !== 'undefined' && mode === 'title') ||
+      (typeof game !== 'undefined' && (mode === 'ride' || mode === 'overcrank') && game.speed < 0.6);
+  }
+  window.HogKickstand = {
+    /* sync(): re-render the current frame synchronously (same JS turn) so a rig
+       can read honest pixels via toDataURL. On the touch tier there is no composer,
+       and the canvas has no preserveDrawingBuffer, so reading the buffer without a
+       fresh render returns black. Zero per-frame cost — called on demand only.
+       Player-anchored probe: lean/pos/foot identify the PLAYER rig unambiguously
+       (every NPC bike carries a stand too, so scene-traverse finds the wrong one) */
+    sync: function () { renderFrame(); return true; },
+    state: function () {
+      var s = { t: standT, tgt: standTgt, rest: kickstandRest() };
+      if (typeof player !== 'undefined' && player) {
+        s.lean = +player.rotation.z.toFixed(4);
+        s.px = +player.position.x.toFixed(2);
+        s.py = +player.position.y.toFixed(3);
+        s.pz = +player.position.z.toFixed(2);
+      }
+      if (typeof playerBike !== 'undefined' && playerBike && playerBike.userData.stand) {
+        var f = playerBike.userData.stand.foot;
+        f.getWorldPosition(KS_SCRATCH);
+        s.fx = +KS_SCRATCH.x.toFixed(3); s.fy = +KS_SCRATCH.y.toFixed(3); s.fz = +KS_SCRATCH.z.toFixed(3);
+        s.legVis = playerBike.userData.stand.leg.visible;
+      }
+      return s;
+    }
+  };
+  function driveKickstand(dt) {
+    var rest = kickstandRest();
+    standTgt = rest ? 1 : 0;
+    var rate = 2.5 * dt;   /* full sweep ≈ 0.4s */
+    if (standT < standTgt) standT = Math.min(standTgt, standT + rate);
+    else if (standT > standTgt) standT = Math.max(standTgt, standT - rate);
+    if (playerBike && playerBike.userData.stand) {
+      var st = playerBike.userData.stand, t = standT;
+      /* leg swings: rotation.z depRz (foot planted outboard) -> stashRz (flush under
+         the frame); the leg + foot positions lerp between their deployed and stash
+         anchors with the same t so nothing pops */
+      st.leg.rotation.z = st.stashRz + (st.depRz - st.stashRz) * t;
+      st.leg.rotation.x = 0.03 * t;
+      st.leg.position.set(st.stashX + (st.depX - st.stashX) * t,
+        st.stashY + (st.depY - st.stashY) * t, st.stashZ + (st.depZ - st.stashZ) * t);
+      st.foot.position.set(st.footStashX + (st.footDepX - st.footStashX) * t,
+        st.footStashY + (st.footDepY - st.footStashY) * t,
+        st.footStashZ + (st.footDepZ - st.footStashZ) * t);
+      st.foot.visible = t > 0.02;
+      st.leg.visible = t > 0.02;
+    }
+    /* lean the whole rig onto the stand: -x side down is +z rotation (right-hand
+       rule about +z tips -x downward). Player origin rides at ground level so the
+       roll pivots about the tire contact line, not the sky. */
+    if (typeof player !== 'undefined' && player) {
+      var lean = STAND_LEAN * standT;
+      player.rotation.z = lean;
+      player.position.y = 0;
+    }
+    if (rest) {
+      idleT += dt;
+      /* engine shake: 31 Hz x 0.004 on the bike, counter-phase whisper on the rider */
+      if (playerBike) playerBike.position.y = Math.sin(idleT * 195) * 0.004 * standT;
+      if (typeof playerRider !== 'undefined' && playerRider)
+        playerRider.position.y = Math.sin(idleT * 195 + Math.PI) * 0.002 * standT;
+      /* exhaust puff through the dust pool — reuses emitDust, needs game coords set */
+      puffT -= dt;
+      if (puffT <= 0 && typeof game !== 'undefined' && typeof emitDust === 'function') {
+        puffT = 1.1 + Math.random() * 0.7;
+        emitDust(game.x - 0.2, 0.5, game.z - 1.9, 0.35);
+      }
+    } else {
+      if (playerBike) playerBike.position.y = 0;
+      puffT = 0.8;
+    }
+  }
 
   /* ---------------- exhaust dust particles ---------------- */
   var DUST_N = 90;
@@ -2743,6 +2860,9 @@
                                                       needs the sign at its home over the spawn */
       player.position.set(roadX(30) + 6.8, 0, 30);
       player.rotation.y = 0;
+      if (typeof game !== 'undefined') { game.x = player.position.x; game.z = player.position.z; }
+      driveKickstand(dt);   /* WAVE 16: stand deployed + lean + idle life at title rest */
+      updateDust(dt);   /* WAVE 16: the rest-state exhaust puff lives and dies here (title has no other dust tick) */
       if (!titleFlyby.update(dt)) {           /* WAVE 12: flyby drives the camera; orbit takes over on settle/skip */
         /* WAVE 12 judge fix: radius 9 put the orbit ON the lit apron (pale-slab frames);
            r15 keeps the camera off the pad with the glowing station behind the rider */
@@ -2847,15 +2967,24 @@
     var slope = roadSlope(game.z);
     player.rotation.y = -Math.atan2(slope, 1) * 0.5 + steerIn * -0.06;
     /* WAVE 10: rider leans INTO the steer (±8° = ±0.14 rad, lerped), bobs subtly
-       at speed, tucks at >150kph. Bike keeps its 0.42 body roll; rider adds character. */
-    playerRider.rotation.z = lerp(playerRider.rotation.z || 0, -steerIn * 0.14, 1 - Math.exp(-6 * dt));
+       at speed, tucks at >150kph. Bike keeps its 0.42 body roll; rider adds character.
+       WAVE 16: at ~0 speed the kickstand owns player.rotation.z (lean onto the stand)
+       and playerRider.position.y (engine shake) — the w10 lines below yield to it so
+       the parked bike never snaps upright fighting the stand. */
+    var parkedRest = game.speed < 0.6;
+    if (!parkedRest)
+      playerRider.rotation.z = lerp(playerRider.rotation.z || 0, -steerIn * 0.14, 1 - Math.exp(-6 * dt));
+    else   /* parked: rider sits neutral, the stand owns the pose */
+      playerRider.rotation.z = lerp(playerRider.rotation.z || 0, 0, 1 - Math.exp(-8 * dt));
     var rideT = performance.now() * 0.001;
     var bobA = clamp(game.speed / 52, 0, 1) * 0.03;
     var tuck = (game.speed * 3.6 > 150) ? -0.12 : 0;   /* kph check on m/s speed */
-    playerRider.position.y = Math.sin(rideT * 9) * bobA;
+    if (!parkedRest) playerRider.position.y = Math.sin(rideT * 9) * bobA;
     playerRider.rotation.x = lerp(playerRider.rotation.x || 0, tuck, 1 - Math.exp(-3 * dt));
-    playerBike.rotation.z = -steerIn * 0.42;
+    if (!parkedRest) playerBike.rotation.z = -steerIn * 0.42;
+    else playerBike.rotation.z = lerp(playerBike.rotation.z || 0, 0, 1 - Math.exp(-8 * dt));
     playerBike.rotation.x = crank.wheelieT > 0 ? -0.38 * Math.min(1, crank.wheelieT / 0.9) : 0;
+    driveKickstand(dt);   /* WAVE 16: stand tuck/lean/shake/puff; no-op at speed */
 
     /* wheels spin */
     var spin = game.speed * dt * 2.2;
