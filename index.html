@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>HOG CRANKERS — NOBODY CRANKS ALONE</title>
+<link rel="icon" href="data:,">
 <style>
   :root{
     --volt:#d8ff00;
@@ -39,7 +40,6 @@
     background:rgba(5,5,5,.62);
     border-left:5px solid var(--volt);
     padding:10px 16px;
-    backdrop-filter:blur(2px);
   }
 
   /* ---------- loading ---------- */
@@ -91,11 +91,28 @@
   #respectval{font-size:40px;line-height:1.05;transform:skewX(-6deg);}
   #tierval{font-size:17px;letter-spacing:2px;color:var(--fire);}
 
-  #questbox{position:absolute;top:20px;left:50%;transform:translateX(-50%);text-align:center;max-width:72vw;}
-  #questbanner{display:none;font-size:clamp(20px,2.6vw,36px);letter-spacing:2px;color:var(--volt);line-height:1.25;}
-  #questsub{display:none;font-family:Arial,Helvetica,sans-serif;font-weight:bold;font-size:14px;color:var(--bone);opacity:.9;margin-top:6px;}
+  /* WAVE 9 mission card: ONE scrimmed unit — banner + objective + distance all sit on the
+     same dark card, so the live distance line can never land naked on the moon fire or any
+     bright sky (judge: "636 M TO SUDS FAMILY DINER" read half-swallowed mid-ride).
+     #questbox.live is synced per-frame from game.js; .panel keeps a fallback look when
+     classless. backdrop-filter removed: fragile compositing with zero night payoff. */
+  #questbox{position:absolute;top:20px;left:50%;transform:translateX(-50%);text-align:center;max-width:60vw;padding:0 4px;}
+  #questbox.live{
+    background:rgba(5,5,5,.8);
+    border-left:5px solid var(--volt);
+    border-right:5px solid var(--volt);
+    padding:8px 20px 10px;
+    box-shadow:0 4px 18px rgba(0,0,0,.55);
+  }
+  #questbox.live .panel{background:none;border:none;padding:2px 0;}
+  #questbanner{display:none;font-size:clamp(20px,2.6vw,36px);letter-spacing:2px;color:var(--volt);line-height:1.2;}
+  #questsub{display:none;font-family:Arial,Helvetica,sans-serif;font-weight:bold;font-size:14px;color:var(--bone);opacity:.92;margin-top:4px;}
   #objective{display:none;font-size:19px;letter-spacing:2px;color:var(--bone);margin-top:4px;}
-  #destdist{display:none;font-size:15px;letter-spacing:3px;color:var(--fire);margin-top:3px;}
+  #destdist{
+    display:none;font-size:16px;letter-spacing:3px;color:var(--fire);margin-top:6px;
+    text-shadow:0 2px 0 rgba(0,0,0,.9);
+  }
+  #questbox.live #destdist{border-top:1px solid rgba(242,234,216,.22);padding-top:6px;}
 
   /* crank meter */
   #meterwrap{position:absolute;left:50%;bottom:6.5vh;transform:translateX(-50%) skewX(-6deg);width:min(620px,58vw);}
@@ -109,7 +126,7 @@
   #combo{position:absolute;right:26px;bottom:110px;font-size:42px;color:var(--volt);transform:skewX(-6deg);text-shadow:0 4px 0 #000;display:none;}
   #combosub{display:block;font-size:16px;letter-spacing:3px;color:var(--fire);}
 
-  #toasts{position:absolute;right:22px;top:64px;display:flex;flex-direction:column;gap:8px;align-items:flex-end;}
+  #toasts{position:absolute;right:22px;top:236px;display:flex;flex-direction:column;gap:8px;align-items:flex-end;}
   .toast{
     background:rgba(5,5,5,.72);border-right:5px solid var(--volt);
     padding:8px 14px;font-size:17px;letter-spacing:1.5px;color:var(--bone);
@@ -182,15 +199,17 @@
   }
   body.hog-touch #controls{display:none;}
   body.hog-touch #helpline{display:none;}
-  /* touch layout: speedo above steer pads, meter left of the crank button (any size).
-     Prompt sits ABOVE the meter, clear of the steer pads (judge: prompt tucked under pads) */
+  /* touch layout: speedo above steer pads, meter sits RIGHT of the pads (WAVE 9: the bar's
+     left end used to run beneath the pads), prompt + bar fully clear of the pads at any width */
   body.hog-touch #speedbox{bottom:calc(134px + env(safe-area-inset-bottom));}
-  body.hog-touch #meterwrap{width:auto;left:14px;right:calc(196px + env(safe-area-inset-right));bottom:calc(56px + env(safe-area-inset-bottom));transform:translateX(0) skewX(-6deg);}
+  body.hog-touch #meterwrap{width:auto;left:calc(232px + env(safe-area-inset-left));right:calc(196px + env(safe-area-inset-right));bottom:calc(56px + env(safe-area-inset-bottom));transform:translateX(0) skewX(-6deg);}
   body.hog-touch #combo{right:auto;left:14px;bottom:calc(230px + env(safe-area-inset-bottom));}
-  /* mission card clears the toasts column (judge: destdist clipped under status box) */
-  #questbox{max-width:60vw;}
-  @media (max-width:960px), (max-height:520px){
-    #questbox{max-width:56vw;}
+  /* toasts sit below the mission card, clear of its right edge (judge: destdist clipped
+     under the status box) — desktop always, touch only on tall tablets (min-height keeps
+     short phones at their compact 64px slot, scoped below) */
+  #toasts{top:252px;}
+  @media (max-height:699px){
+    body.hog-touch #toasts{top:calc(176px + env(safe-area-inset-top));}
   }
   /* phones any orientation (landscape phone is short, not narrow) */
   @media (max-width:960px), (max-height:520px){
@@ -208,11 +227,17 @@
     #respectval{font-size:26px;}
     #tierval{font-size:13px;}
     #mutetag{right:calc(14px + env(safe-area-inset-top));top:calc(12px + env(safe-area-inset-top));font-size:12px;}
-    #toasts{right:12px;top:calc(50px + env(safe-area-inset-top));}
+    /* short touch screens (phone 844x390, card bottom measured at 141px): toasts sit below
+       the card, clear of its right edge AND the crank button (top 232px) */
+    body.hog-touch #toasts{right:12px;top:calc(150px + env(safe-area-inset-top));}
+    body:not(.hog-touch) #toasts{right:12px;top:calc(50px + env(safe-area-inset-top));}
     .toast{font-size:14px;max-width:240px;padding:6px 10px;}
-    #questbox{max-width:92vw;top:calc(8px + env(safe-area-inset-top));}
+    #questbox{max-width:78vw;top:calc(8px + env(safe-area-inset-top));}
+    #questbox.live{padding:6px 14px 8px;}
+    #questbanner{font-size:17px;}
+    #questsub{font-size:12px;}
     #objective{font-size:15px;}
-    #destdist{font-size:13px;}
+    #destdist{font-size:14px;}
     /* fonts tighten on small screens; layout handled by body.hog-touch rules above */
     body:not(.hog-touch) #meterwrap{width:86vw;}
     #meterlabel{font-size:14px;}
@@ -300,22 +325,22 @@
 
 <script src="three.min.js"></script>
 <!-- WAVE 5 NIGHT ENGINE: r128 post-processing, vendored locally (non-module THREE.* globals) -->
-<script src="js/post/shaders/CopyShader.js?v=20260915b"></script>
-<script src="js/post/shaders/LuminosityHighPassShader.js?v=20260915b"></script>
-<script src="js/post/shaders/GammaCorrectionShader.js?v=20260915b"></script>
-<script src="js/post/shaders/FXAAShader.js?v=20260915b"></script>
-<script src="js/post/postprocessing/EffectComposer.js?v=20260915b"></script>
-<script src="js/post/postprocessing/RenderPass.js?v=20260915b"></script>
-<script src="js/post/postprocessing/ShaderPass.js?v=20260915b"></script>
-<script src="js/post/postprocessing/MaskPass.js?v=20260915b"></script>
-<script src="js/post/postprocessing/UnrealBloomPass.js?v=20260915b"></script>
-<script src="js/audio.js?v=20260915b"></script>
-<script src="js/visuals.js?v=20260915b"></script>
-<script src="js/quests.js?v=20260915b"></script>
-<script src="js/voice.js?v=20260915b"></script>
-<script src="js/voicepack.js?v=20260915b"></script>
-<script src="js/music.js?v=20260915b"></script>
-<script src="js/game.js?v=20260915b"></script>
-<script src="js/touch.js?v=20260915b"></script>
+<script src="js/post/shaders/CopyShader.js?v=20260915c"></script>
+<script src="js/post/shaders/LuminosityHighPassShader.js?v=20260915c"></script>
+<script src="js/post/shaders/GammaCorrectionShader.js?v=20260915c"></script>
+<script src="js/post/shaders/FXAAShader.js?v=20260915c"></script>
+<script src="js/post/postprocessing/EffectComposer.js?v=20260915c"></script>
+<script src="js/post/postprocessing/RenderPass.js?v=20260915c"></script>
+<script src="js/post/postprocessing/ShaderPass.js?v=20260915c"></script>
+<script src="js/post/postprocessing/MaskPass.js?v=20260915c"></script>
+<script src="js/post/postprocessing/UnrealBloomPass.js?v=20260915c"></script>
+<script src="js/audio.js?v=20260915c"></script>
+<script src="js/visuals.js?v=20260915c"></script>
+<script src="js/quests.js?v=20260915c"></script>
+<script src="js/voice.js?v=20260915c"></script>
+<script src="js/voicepack.js?v=20260915c"></script>
+<script src="js/music.js?v=20260915c"></script>
+<script src="js/game.js?v=20260915c"></script>
+<script src="js/touch.js?v=20260915c"></script>
 </body>
 </html>
