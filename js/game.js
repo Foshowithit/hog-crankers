@@ -1750,6 +1750,13 @@
     var rail = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.1, 0.14), railMat);
     rail.position.set(6, 0.92, -11.5);
     grp.add(rail);
+    /* WAVE 13: static ember pip on the rail-end post — marks the brother from the far
+       approach (hazard-blinker HDR pattern, always-on: zero added per-frame cost). */
+    var railEmber = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 5), new THREE.MeshBasicMaterial({ color: 0xff6a18 }));
+    railEmber.material.color.setRGB(2.4, 0.8, 0.18);          /* over the bloom line, like the blinker */
+    railEmber.material.fog = false;                           /* FogExp2 ate markers past ~500 */
+    railEmber.position.set(4.8, 1.0, -11.5);
+    grp.add(railEmber);
     /* seated figure: torso + head + thighs forward + one waving arm (userData.waveArm) */
     var sit = new THREE.Group();
     var vest = new THREE.MeshLambertMaterial({ color: color });
@@ -1760,6 +1767,20 @@
     var patch = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.03), MATS.bone);
     patch.position.set(0, 1.36, -0.27);
     sit.add(patch);
+    /* WAVE 13: high-vis trim so the brother reads at 40+ units on the dark approach —
+       warm MeshBasic stripes held under the 0.72 bloom threshold (sign-strip doctrine:
+       visible, not bloom slop). Waist band reads from every angle; braces live on the
+       road-facing chest (sit is yawed PI, so local +z = toward the approaching rider). */
+    var hiVis = new THREE.MeshBasicMaterial({ color: 0xc88a2a });
+    hiVis.color.setRGB(0.78, 0.36, 0.07);    /* linear amber — gamma pass lifts it to hi-vis */
+    var visBelt = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.09, 9), hiVis);
+    visBelt.position.set(0, 1.18, 0);
+    sit.add(visBelt);
+    for (var vs13 = 0; vs13 < 2; vs13++) {
+      var brace13 = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.46, 0.03), hiVis);
+      brace13.position.set(vs13 === 0 ? -0.11 : 0.11, 1.4, 0.25);
+      sit.add(brace13);
+    }
     var head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 8, 7), skin);
     head.position.set(0, 1.82, 0);
     sit.add(head);
@@ -1797,21 +1818,58 @@
        body, moonlit roof rim, sub-threshold lit window bands, road-facing sign (-z face greets
        the approaching rider), and ONE small volt roof marker over the bloom threshold. */
     var grp = new THREE.Group();
-    var bldg = new THREE.Mesh(new THREE.BoxGeometry(20, 7, 14), new THREE.MeshLambertMaterial({ color: 0x17120d }));
+    /* WAVE 13: body pushed to the neutral-dark matte range (0x141414 family) — from the
+       approach the mass reads as silhouette and the lit windows/sign are the only bright
+       things (bible rule 1). The old 0x17120d warmed up under moonlight into a gray slab. */
+    var bldg = new THREE.Mesh(new THREE.BoxGeometry(20, 7, 14), new THREE.MeshLambertMaterial({ color: 0x141213 }));
     bldg.position.y = 3.5;
     grp.add(bldg);
     var trim = new THREE.Mesh(new THREE.BoxGeometry(20.6, 0.26, 14.6), new THREE.MeshLambertMaterial({ color: 0x878d94 }));
     trim.position.y = 7.06;                                    /* chrome rim keeps the silhouette readable far off */
     grp.add(trim);
-    var winMat = new THREE.MeshBasicMaterial({ color: 0x7a4a1e });   /* warm windows, under the 0.72 bloom threshold */
-    winMat.color.setRGB(0.30, 0.10, 0.02);   /* linear-space warm ember: gamma pass lifts it to a lit-window glow,
-                                                not cream (hex picked blind reads pale through GammaCorrection) */
-    var winHi = new THREE.Mesh(new THREE.BoxGeometry(14, 0.9, 0.14), winMat);
-    winHi.position.set(0, 4.6, -7.07);                         /* road-facing (-z) band */
-    grp.add(winHi);
-    var winLo = new THREE.Mesh(new THREE.BoxGeometry(9, 0.7, 0.14), winMat);
-    winLo.position.set(-3.5, 2.2, -7.07);
-    grp.add(winLo);
+    /* WAVE 13: real windows, not bands — per-pane ember at 2-3 brightness levels (picked at
+       build time, zero per-frame work), each pane framed + crossed by near-black mullion bars
+       slightly proud of the glass plane. Brightest panes ignore fog so the facade carries as a
+       warm beacon from the far approach (bible rule 1). Ember in linear space: the gamma pass
+       lifts it to a lit-window glow, not cream (wave-9 lesson). */
+    var mullMat = new THREE.MeshLambertMaterial({ color: 0x0b0908 });
+    var frameMat = new THREE.MeshLambertMaterial({ color: 0x0d0a08 });
+    var emberHi = new THREE.MeshBasicMaterial({ color: 0x7a4a1e });
+    emberHi.color.setRGB(0.55, 0.19, 0.036);
+    emberHi.fog = false;                     /* beacon read past ~400u */
+    var emberMid = new THREE.MeshBasicMaterial({ color: 0x7a4a1e });
+    emberMid.color.setRGB(0.38, 0.13, 0.026); /* the shipped wave-9 ember, lifted a stop */
+    var emberLo = new THREE.MeshBasicMaterial({ color: 0x7a4a1e });
+    emberLo.color.setRGB(0.20, 0.066, 0.014);
+    var emberLvls = [emberHi, emberMid, emberMid, emberLo, emberLo];
+    function emberWindow(cx, cy, w, h) {
+      /* WAVE 13 fix: the first cut used a SOLID frame slab — it buried the pane and the
+         mullions (z-fight slashes in evidence). Now: pane proud of the wall, four border
+         bars AROUND it (never in front), mullions proud of the glass. No buried faces. */
+      var pane = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.1),
+        emberLvls[(Math.random() * emberLvls.length) | 0]);
+      pane.position.set(cx, cy, -7.05);                        /* glass front at -7.10 */
+      grp.add(pane);
+      var bTop = new THREE.Mesh(new THREE.BoxGeometry(w + 0.26, 0.13, 0.1), frameMat);
+      bTop.position.set(cx, cy + h / 2 + 0.065, -7.05);
+      grp.add(bTop);
+      var bBot = new THREE.Mesh(new THREE.BoxGeometry(w + 0.26, 0.13, 0.1), frameMat);
+      bBot.position.set(cx, cy - h / 2 - 0.065, -7.05);
+      grp.add(bBot);
+      for (var bs13 = -1; bs13 <= 1; bs13 += 2) {
+        var bSide = new THREE.Mesh(new THREE.BoxGeometry(0.13, h, 0.1), frameMat);
+        bSide.position.set(cx + bs13 * (w / 2 + 0.065), cy, -7.05);
+        grp.add(bSide);
+      }
+      var mullV = new THREE.Mesh(new THREE.BoxGeometry(0.09, h, 0.12), mullMat);
+      mullV.position.set(cx, cy, -7.09);                       /* bar proud of the glass by 0.05 */
+      grp.add(mullV);
+      var mullH = new THREE.Mesh(new THREE.BoxGeometry(w, 0.09, 0.1), mullMat);
+      mullH.position.set(cx, cy, -7.08);                       /* shallower than V: no coplanar fronts */
+      grp.add(mullH);
+    }
+    for (var wu13 = 0; wu13 < 5; wu13++) emberWindow(-6 + wu13 * 3, 4.6, 2.0, 1.1);
+    for (var wl13 = 0; wl13 < 4; wl13++) emberWindow(-6.6 + wl13 * 4.4, 2.2, 2.0, 0.95);
     var sign = new THREE.Mesh(
       new THREE.BoxGeometry(18, 3.2, 0.3),
       new THREE.MeshBasicMaterial({ map: signTexture(name, 'BROTHERS WELCOME', { size: 54 }) })
@@ -1820,24 +1878,50 @@
     sign.position.set(0, 8.6, -7.2);                           /* roof-mounted board, faces the rider on
                                                                   approach (billboards' lesson) */
     grp.add(sign);
+    /* WAVE 13: two-tone board — a thin warm border line proud of the sign face (sub-threshold
+       ember, same family as the windows). Carries the board's edge when the canvas border
+       aliases away at distance. No new text, no new canon. */
+    var edgeMat = new THREE.MeshBasicMaterial({ color: 0x8a4a1e });
+    edgeMat.color.setRGB(0.55, 0.2, 0.045);
+    var edges = [
+      [18.3, 0.14, 0, 10.16], [18.3, 0.14, 0, 7.04],
+      [0.14, 3.3, -9.03, 8.6], [0.14, 3.3, 9.03, 8.6]
+    ];
+    for (var ed13 = 0; ed13 < 4; ed13++) {
+      var edge = new THREE.Mesh(new THREE.BoxGeometry(edges[ed13][0], edges[ed13][1], 0.05), edgeMat);
+      edge.position.set(edges[ed13][2], edges[ed13][3], -7.37);
+      grp.add(edge);
+    }
     var post;
     for (var sxi = -1; sxi <= 1; sxi += 2) {                   /* two roof posts ground the board — no float */
       post = new THREE.Mesh(new THREE.BoxGeometry(0.24, 1.6, 0.24), new THREE.MeshLambertMaterial({ color: 0x33302a }));
       post.position.set(sxi * 7.5, 7.7, -7.2);
       grp.add(post);
     }
-    var mast = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.4, 0.12), new THREE.MeshLambertMaterial({ color: 0x33302a }));
-    mast.position.set(11.2, 7.7, -7.6);        /* front roof corner: in front of the sign plane and
-                                                  clear of the board (a beacon hidden behind the
-                                                  sign is no beacon — verified in zoom) */
-    grp.add(mast);
-    var beacon = new THREE.Mesh(new THREE.SphereGeometry(0.26, 8, 6), new THREE.MeshBasicMaterial({ color: 0xd8ff00 }));
+    /* WAVE 13: the old mast sat at x=11.2 — off the 20-wide body — so the volt pip read as a
+       streetlamp head floating past the roofline (w10 judge soft note). Grounded now: a yard-light
+       standard at the front corner, pole base at y=0, arm + shade + head seated on top. No angle
+       shows a gap, and the beacon stays clear of the sign board (x 10.9 vs board edge 9). */
+    var lampX = 10.9, lampZ = -7.9;
+    var pole = new THREE.Mesh(new THREE.BoxGeometry(0.14, 7.9, 0.14), new THREE.MeshLambertMaterial({ color: 0x33302a }));
+    pole.position.set(lampX, 3.95, lampZ);
+    grp.add(pole);
+    var arm = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.55), new THREE.MeshLambertMaterial({ color: 0x33302a }));
+    arm.position.set(lampX, 7.86, lampZ - 0.22);               /* short arm reaching over the lot */
+    grp.add(arm);
+    var shade = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.28, 8), new THREE.MeshLambertMaterial({ color: 0x2a2724 }));
+    shade.position.set(lampX, 7.78, lampZ - 0.45);             /* apex meets the pole top — seated */
+    grp.add(shade);
+    var beacon = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), new THREE.MeshBasicMaterial({ color: 0xd8ff00 }));
     beacon.material.color.setRGB(1.2, 1.8, 0.4);               /* HDR kiss: one volt pip, carries from 640 */
     beacon.material.fog = false;                               /* FogExp2 ate markers past ~500 (tower lesson) */
-    beacon.position.set(11.2, 8.5, -7.6);
+    beacon.position.set(lampX, 7.6, lampZ - 0.45);             /* glowing under the shade */
     grp.add(beacon);
-    var glow = new THREE.PointLight(0xffa050, 0.8, 42);        /* warm door pool, same doctrine as the diner */
-    glow.position.set(0, 3.2, -9);
+    var glow = new THREE.PointLight(0xffa050, 0.55, 26);       /* warm door pool, same doctrine as the diner —
+                                                                  WAVE 13: pulled in (was 0.8/42) so the pool
+                                                                  lights the DOOR, not the whole facade into
+                                                                  a beige wash up close (w12 lesson) */
+    glow.position.set(0, 2.8, -9);
     grp.add(glow);
     scene.add(grp);
     return grp;
