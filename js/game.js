@@ -1358,6 +1358,7 @@
     if (keys[e.code]) return;   // no key-repeat side effects
     keys[e.code] = true;
     if (mode === 'title') {
+      if (window.HogMusic) HogMusic.toMenu();   /* WAVE 6: first gesture unlocks the menu theme */
       if (e.code === 'Digit1') { selectDiff(0); startGame(); }
       if (e.code === 'Digit2') { selectDiff(1); startGame(); }
       if (e.code === 'Digit3') { selectDiff(2); startGame(); }
@@ -1369,6 +1370,7 @@
       muted = HogAudio.toggleMute();
       el.mutetag.style.display = muted ? 'block' : 'none';
       if (voice) voice.setMuted(muted);
+      if (window.HogMusic) HogMusic.setMute(muted);
     }
     if (e.code === 'KeyP' && (mode === 'ride' || mode === 'overcrank')) togglePause();
     if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
@@ -1405,6 +1407,7 @@
     if (mode !== 'title') return;
     audio.init();
     audio.engineOn();
+    if (window.HogMusic) HogMusic.toRide();   /* WAVE 6: swap menu theme for the ride anthem */
     if (voice) { voice.prime(); voice.event('start'); }
     HogQuests.reset();
     game.respect = 0; game.tier = 0;
