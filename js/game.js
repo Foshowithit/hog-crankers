@@ -2883,6 +2883,7 @@
       updateWeather(dt);   /* WAVE 11 STORM FRONT clock — fog, lightning, rain */
       updateSkyFX(now, dt, game.z);
       updateSparks(dt);
+      updateTraffic(dt);   /* WAVE 18 ONCOMING: pooled westbound traffic — ride/overcrank only, never the title */
     }
     renderFrame();
   }
@@ -3286,6 +3287,9 @@
     if (crank.active) shake = crank.level * 0.34;
     if (crank.boostT > 0) shake += 0.12;
     if (onGrass) shake += 0.1;
+    /* WAVE 18: wind-buffet as an oncoming car passes — reuses this camera shake,
+       decays over its own 0.3s window; air push, not a hit (touch never sets it) */
+    if (buffetT > 0) { shake += buffetT * 0.8; buffetT -= dt; }
     var shX = (Math.random() - 0.5) * shake;
     var shY = (Math.random() - 0.5) * shake;
     var camPos = CAMS[camMode], lookY = (camMode === 2) ? 1.6 : 1.4;
@@ -3302,6 +3306,179 @@
     moon.position.set(game.x + 160, 175, game.z + 800);
     ground.position.z = game.z;
   }
+
+  /* ---------------- WAVE 18: ONCOMING — pooled westbound traffic ----------------
+     18 waves of world-building and the westbound lane never carried one moving
+     car. One theme: the road is a highway, not a movie set. LIGHT SIGNATURE (the
+     w9/w13 beacon lesson): the two headlight GLARE sprites are fog:false additive
+     dots, so two points of glow emerge from the fog BEFORE the body resolves —
+     lamp boxes, paint and pool obey FogExp2 and fade with the world (w14 ring
+     doctrine: fog hides the seam). Pool = the w5 headlight-pool pattern (additive
+     plane, sub-bloom); NO new lights anywhere.
+     LANE GEOMETRY (measured): road half-width 12, center dash at roadX(z); the
+     player cruises the EAST lane (spawn roadX+6.8, pack slots +2.2/+3, draft
+     window |dx|<2.4) but steering can cross the center line (grass drag only
+     past ±12) — so the westbound lane sits at roadX − 5.4..−7.0 (matches the
+     hoa crossover's −5.5), plus a soft lateral BERTH: a car within 20u of the
+     rider eases west to hold a 4.2u margin (clamped to the west tarmac at
+     roadX−8.6), so pass-bys never intersect the player or the pack under normal
+     riding. ARRIVAL DISCIPLINE: once a quest destination is within 460u, traffic
+     that would cross the beat is HELD beyond it (destPos + 150, inside fog) —
+     cars already on the road finish their pass, then the window stays empty.
+     RING RECYCLE at the world's own despawn line (game.z − 130), respawn beyond
+     fog (game.z + 620..750 ≈ 1.5% visibility at calm fog, ~0% in storm), speed
+     re-rolled 30–45 u/s. Cars live on ride/overcrank ONLY — the title stays the
+     empty cinematic. Zero per-frame allocation (numbers + cached handles only).
+     IS_TOUCH: 2 cars, glare on, wind buffet skipped. Draw calls ≈ 13 per car. */
+  var TRAF_N = IS_TOUCH ? 2 : 3;
+  var buffetT = 0;                      /* passing-car air push (desktop only) */
+  var trafLive = false;
+  var trafCars = [];
+  (function buildTraffic() {
+    var wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.26, 8);
+    wheelGeo.rotateZ(Math.PI / 2);
+    var lampGeo = new THREE.BoxGeometry(0.3, 0.16, 0.08);
+    var lampMat = new THREE.MeshBasicMaterial({ color: 0x4a463a });     /* dim lamp face, sub-bloom — the SPRITES own the glare */
+    var tailMat = new THREE.MeshBasicMaterial({ color: 0x5a0f0c });     /* night-dim red, sub-bloom */
+    /* soft warm road-pool texture — the w5 headlight-pool recipe, POT 256 */
+    var pc = makeCanvas(256, 256), pg = pc.getContext('2d');
+    var rg = pg.createRadialGradient(128, 128, 6, 128, 128, 122);
+    rg.addColorStop(0.00, 'rgba(255,214,156,0.50)');
+    rg.addColorStop(0.40, 'rgba(255,204,140,0.20)');
+    rg.addColorStop(1.00, 'rgba(255,198,132,0)');
+    pg.fillStyle = rg;
+    pg.fillRect(0, 0, 256, 256);
+    var poolGeo = new THREE.PlaneGeometry(6.5, 16);
+    var poolMat = new THREE.MeshBasicMaterial({
+      map: srgb(new THREE.CanvasTexture(pc)), transparent: true, opacity: 0.3, fog: false,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    var glareMat = new THREE.SpriteMaterial({
+      map: V.softDotTexture ? V.softDotTexture() : null,
+      transparent: true, opacity: 0.8, depthWrite: false, fog: false,
+      blending: THREE.AdditiveBlending
+    });
+    glareMat.color.setRGB(1.7, 1.55, 1.2);                              /* over the bloom threshold: the glow carries, without a huge mip halo */
+    /* box-Americana: [paint, body(w,h,l,y), cab(w,h,l,y,z), aft piece or null].
+       Paints follow the world's night-silhouette discipline (poles/tower ship at
+       0x0d-0x14): 0x23+ Lambert reads warm-tan under hemi 0.8 — near-black with a
+       hue whisper is the dark-moody read this game's night actually renders. */
+    var defs = [
+      { paint: 0x0e1216, body: [1.9, 0.85, 4.4, 0.72], cab: [1.7, 0.75, 1.5, 1.42, 0.15], extra: [1.8, 0.45, 1.4, 1.1, 1.5] },  /* pickup: cab forward, bed rails aft */
+      { paint: 0x120e0a, body: [1.85, 0.8, 4.3, 0.68], cab: [1.65, 0.62, 2.1, 1.32, 0.15], extra: null },                        /* sedan */
+      { paint: 0x0d130f, body: [1.9, 0.9, 4.5, 0.72], cab: [1.7, 0.68, 3.0, 1.44, 0.5], extra: null }                            /* wagon: long roof */
+    ];
+    for (var i = 0; i < TRAF_N; i++) {
+      var d = defs[i % defs.length];
+      var bodyLen = d.body[2];
+      var g = new THREE.Group();
+      var bodyMat = new THREE.MeshLambertMaterial({ color: d.paint });  /* ONE shared paint per car */
+      var body = new THREE.Mesh(new THREE.BoxGeometry(d.body[0], d.body[1], bodyLen), bodyMat);
+      body.position.y = d.body[3];
+      g.add(body);
+      var cab = new THREE.Mesh(new THREE.BoxGeometry(d.cab[0], d.cab[1], d.cab[2]), bodyMat);
+      cab.position.set(0, d.cab[3], d.cab[4]);
+      g.add(cab);
+      if (d.extra) {
+        var ex = new THREE.Mesh(new THREE.BoxGeometry(d.extra[0], d.extra[1], d.extra[2]), bodyMat);
+        ex.position.set(0, d.extra[3], d.extra[4]);
+        g.add(ex);
+      }
+      for (var w = 0; w < 4; w++) {
+        var wh = new THREE.Mesh(wheelGeo, MATS.dark);
+        wh.position.set(w < 2 ? 0.88 : -0.88, 0.34, w % 2 === 0 ? bodyLen * 0.32 : -bodyLen * 0.33);
+        g.add(wh);
+      }
+      for (var h2 = 0; h2 < 2; h2++) {
+        var lx = h2 === 0 ? 0.68 : -0.68;
+        var lamp = new THREE.Mesh(lampGeo, lampMat);
+        lamp.position.set(lx, 0.8, -bodyLen / 2 + 0.02);
+        g.add(lamp);
+        var glare = new THREE.Sprite(glareMat);                         /* fog:false — emerges from the fog FIRST */
+        glare.scale.set(1.15, 1.15, 1);                                 /* tight ball: must not wash the body at pass range */
+        glare.position.set(lx, 0.8, -bodyLen / 2 - 0.12);
+        g.add(glare);
+        var tail = new THREE.Mesh(lampGeo, tailMat);                    /* red recede after the pass */
+        tail.position.set(lx, 0.82, bodyLen / 2 - 0.02);
+        g.add(tail);
+      }
+      var pool = new THREE.Mesh(poolGeo, poolMat);                      /* swept light ahead of the nose */
+      pool.rotation.x = -Math.PI / 2;
+      pool.position.set(0, 0.03, -(bodyLen / 2 + 7.5));
+      pool.renderOrder = 4;
+      g.add(pool);
+      g.visible = false;
+      g.position.set(roadX(30) - 6.2, 0, -4000);                        /* parked off-world until the first ride */
+      scene.add(g);
+      trafCars.push({ g: g, z: -4000, spd: 36, lane: -6.2, laneCur: -6.2 });
+    }
+  })();
+
+  function updateTraffic(dt) {
+    /* first ride frame: deploy the ring beyond fog, staggered so passes rhythm out */
+    if (!trafLive) {
+      trafLive = true;
+      for (var i0 = 0; i0 < trafCars.length; i0++) {
+        var c0 = trafCars[i0];
+        c0.z = game.z + 430 + i0 * 260 + rand(0, 90);
+        c0.spd = rand(30, 45);
+        c0.lane = rand(-7.0, -5.4);
+        c0.laneCur = c0.lane;
+        c0.g.visible = true;
+      }
+    }
+    /* arrival beat: once the destination is within 460u, traffic beyond the beat
+       holds (invisible in fog); cars already inside finish their pass */
+    var hold = quest.active && quest.state === 'tow' && quest.destPos - game.z < 460;
+    for (var ti = 0; ti < trafCars.length; ti++) {
+      var tc = trafCars[ti];
+      if (hold && tc.z > quest.destPos + 150) continue;
+      tc.z -= tc.spd * dt;
+      if (tc.z < game.z - 130) {          /* despawned behind the world line — recycle beyond fog ahead */
+        tc.z = game.z + 620 + rand(0, 130);
+        if (hold && tc.z < quest.destPos + 150) tc.z = quest.destPos + 150 + rand(0, 70);
+        if (hoa.active) { var gk = 0; while (Math.abs(tc.z - hoa.z) < 55 && gk++ < 8) tc.z += 45; }  /* never stack the crossover */
+        tc.spd = rand(30, 45);
+        tc.lane = rand(-7.0, -5.4);
+      }
+      /* soft berth: if the rider crosses the center line, ease west and hold 4.2u */
+      var dzp = tc.z - game.z;
+      var encroach = Math.abs(dzp) < 20 && Math.abs(roadX(tc.z) + tc.lane - game.x) < 4.2;
+      var laneTgt = tc.lane;
+      if (encroach) laneTgt = Math.max(-8.6, Math.min(tc.lane, game.x - roadX(tc.z) - 4.2));   /* w18 judge: relative frame — absolute game.x on curves berthed cars EAST across the line */
+      tc.laneCur = lerp(tc.laneCur, laneTgt, 1 - Math.exp(-5 * dt));
+      tc.g.position.set(roadX(tc.z) + tc.laneCur, 0, tc.z);
+      tc.g.rotation.y = Math.atan2(roadSlope(tc.z), 1);
+      /* air push as the car passes (desktop only; touch keeps cars + glare).
+         Lateral gate 14.5: the normal cruise band (player offset +3..+11 east,
+         lane 5.4..7 west) sits 8..18u apart — 14.5 covers the real pass-bys. */
+      if (!IS_TOUCH && Math.abs(dzp) < 3.2 && Math.abs(roadX(tc.z) + tc.laneCur - game.x) < 14.5) buffetT = 0.3;
+    }
+  }
+
+  window.HogTraffic = {
+    /* _cars: the raw car groups — probe/rig handle (same spirit as HogDebug.scene) */
+    _cars: trafCars,
+    /* stage(lead): teleport car 0 to `lead` units ahead of the player — rig-only
+       deterministic pass-by; state(): computed census for evidence asserts */
+    stage: function (lead) {
+      var c = trafCars[0];
+      c.z = game.z + lead;
+      c.g.visible = true;
+      c.g.position.set(roadX(c.z) + c.laneCur, 0, c.z);
+      return { z: +c.z.toFixed(1), x: +c.g.position.x.toFixed(2) };
+    },
+    state: function () {
+      var cars = [];
+      for (var i = 0; i < trafCars.length; i++) {
+        var c = trafCars[i];
+        cars.push({ z: +c.z.toFixed(1), x: +c.g.position.x.toFixed(2), spd: +c.spd.toFixed(1), vis: c.g.visible });
+      }
+      var hold = quest.active && quest.state === 'tow' && quest.destPos - game.z < 460;
+      return { live: trafLive, n: trafCars.length, hold: hold, buffet: +buffetT.toFixed(2),
+               touch: IS_TOUCH, px: +game.x.toFixed(2), pz: +game.z.toFixed(2), cars: cars };
+    }
+  };
 
   /* ---------------- boot ---------------- */
   var loadPct = 2;
