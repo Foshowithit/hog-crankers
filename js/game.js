@@ -1146,6 +1146,298 @@
   scene.add(tower);
   landmarks.push({ grp: tower, z: 3860, off: 30, yaw: 0.35 });
 
+  /* --- WAVE 24 THE DRIVE-IN: a roadside drive-in theater at night, running a
+     skeleton biker flick to nobody. Fourth landmark on the 6400 stride: 1250
+     diner / 2560 barn / 3860 tower / 5170 drive-in -> beats 1310 / 1300 / 1310,
+     and the wrap gap down to the next diner lap shrinks 3790 -> 2480. The
+     recycle loop below is generic over `landmarks`, so the 4th entry rides the
+     same +LANDMARK_SPAN rewrite on both tiers (no other changes needed).
+     SITE GEOMETRY (why off -41, yaw -0.32): west side, laid out parallel to the
+     road in group-local space (screen at local origin, lot running local -z
+     toward oncoming riders, concession shack at the far end). World-local axis
+     map for yaw -0.32: world_dx = 0.949*lx - 0.314*lz. Worst corner (lot east
+     front, lx 13.5 / lz -47) lands at off + 27.6 = roadX - 13.4, clearing the
+     road edge (+12) and the w14 west fence (-11.5) with margin, so no site
+     element ever crosses the road corridor. Face = local -z (material
+     index 5, w8 doctrine); world face normal (0.31, -0.95) is within ~14 deg of
+     perpendicular to an approaching rider's sightline at any distance — the art
+     reads on approach, not on pass-by. Bible rule 1: structure stays dark
+     silhouette; the only deliberate emissives are the projector-lit screen face
+     (gentle 1.18 lift, tuned sub-flood), the shack's warm booth window (diner
+     doctrine) and one tiny red projector pip (tower-beacon precedent). */
+  var drivein = new THREE.Group();
+  drivein.name = 'drivein24';
+  var driveinPoolMat = null, driveinBeamMat = null, driveinBeam = null, driveinScreenMat = null, driveinMark = null;
+  (function () {
+    var steel24 = new THREE.MeshLambertMaterial({ color: 0x0c0a09 });
+
+    /* title-card fallback (MUSE SIGN SWAP-IN pattern, gas-station sign verbatim
+       shape: canvas face now, async jpg swap on load, 404 -> canvas stays):
+       dark grey screen with faint film-grain + the art's own title painted, so
+       the landmark reads even before / if the jpg fails. */
+    function driveinTitleCard() {
+      var c = makeCanvas(1024, 512), g = c.getContext('2d');
+      g.fillStyle = '#262320';                       /* screen between reels */
+      g.fillRect(0, 0, 1024, 512);
+      for (var i = 0; i < 1500; i++) {               /* film grain */
+        var v24 = Math.random() < 0.5 ? 255 : 0;
+        g.fillStyle = 'rgba(' + v24 + ',' + v24 + ',' + v24 + ',' + (0.02 + Math.random() * 0.06).toFixed(3) + ')';
+        g.fillRect(Math.random() * 1024, Math.random() * 512, 1 + Math.random() * 2, 1 + Math.random() * 2);
+      }
+      for (var sc24 = 0; sc24 < 4; sc24++) {         /* reel scratches */
+        g.fillStyle = 'rgba(230,225,210,0.05)';
+        g.fillRect(Math.random() * 1024, 0, 1, 512);
+      }
+      g.fillStyle = 'rgba(12,10,8,0.55)';            /* title band scrim */
+      g.fillRect(0, 372, 1024, 140);
+      g.textAlign = 'center';
+      g.fillStyle = '#e8ddc4';
+      g.font = '86px Impact, "Arial Black", sans-serif';
+      g.fillText('NIGHT OF THE CRANKERS', 512, 452, 960);
+      g.fillStyle = '#cfc3a4';
+      g.font = '30px Impact, "Arial Black", sans-serif';
+      g.fillText('WHEN THE DEAD RIDE...  FEAR THE DAWN!', 512, 494, 900);
+      var t24 = srgb(new THREE.CanvasTexture(c));
+      t24.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      return t24;
+    }
+    driveinScreenMat = new THREE.MeshBasicMaterial({ map: driveinTitleCard() });
+    driveinScreenMat.color.setRGB(1.18, 1.18, 1.14); /* projector-lit: map x color lift. Deliberate
+                                                        sub-flood exception to the matte landmark rule
+                                                        (diner neon trick at gentler gain) — the face is
+                                                        a LIT screen; tune-by-screenshot kept it glowing
+                                                        without whitewashing the approach view */
+    new THREE.TextureLoader().load('assets/drivein-screen.jpg', function (t) {
+      t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      driveinScreenMat.map = srgb(t);
+      driveinScreenMat.needsUpdate = true;
+    });
+    /* screen face box: art on -z (index 5), slabDark elsewhere. 22x11 (art is
+       2:1, face 2:1): a drive-in screen is the biggest thing on the roadside —
+       tuned by screenshot until the pass-by read is a genuine whoa. Bottom edge
+       y 4.25 clears the corn line at grazing angles. */
+    var screenBox = new THREE.Mesh(
+      new THREE.BoxGeometry(22, 11, 0.5),
+      [slabDark, slabDark, slabDark, slabDark, slabDark, driveinScreenMat]
+    );
+    screenBox.position.set(0, 9.75, 0);
+    drivein.add(screenBox);
+    /* pylon frame: two front masts + two rear posts + top rim, all silhouette */
+    var mastGeo24 = new THREE.CylinderGeometry(0.28, 0.36, 15.6, 6);
+    var m24;
+    m24 = new THREE.Mesh(mastGeo24, steel24); m24.position.set(-9.4, 7.8, 0.1); drivein.add(m24);
+    m24 = new THREE.Mesh(mastGeo24, steel24); m24.position.set(9.4, 7.8, 0.1); drivein.add(m24);
+    var postGeo24 = new THREE.BoxGeometry(0.24, 12.6, 0.24);
+    m24 = new THREE.Mesh(postGeo24, steel24); m24.position.set(-9.4, 6.3, 2.1); drivein.add(m24);
+    m24 = new THREE.Mesh(postGeo24, steel24); m24.position.set(9.4, 6.3, 2.1); drivein.add(m24);
+    var rim = new THREE.Mesh(new THREE.BoxGeometry(23.6, 0.36, 2.3), steel24);
+    rim.position.set(0, 15.3, 0.2);
+    drivein.add(rim);
+
+    /* gravel lot: local canvas dirt, darker than the shoulder, faint row tracks */
+    var lotCanvas = makeCanvas(512, 512);
+    (function (g) {
+      g.fillStyle = '#24211e';
+      g.fillRect(0, 0, 512, 512);
+      for (var m24 = 0; m24 < 800; m24++) {
+        var v24 = 22 + (Math.random() * 22) | 0;
+        g.fillStyle = 'rgba(' + v24 + ',' + v24 + ',' + (v24 + 2) + ',' + (0.25 + Math.random() * 0.4) + ')';
+        g.fillRect(Math.random() * 512, Math.random() * 512, 2 + Math.random() * 8, 2 + Math.random() * 8);
+      }
+      g.fillStyle = 'rgba(56,50,44,0.6)';            /* two worn drive-in rows */
+      g.fillRect(96, 0, 52, 512);
+      g.fillRect(330, 0, 52, 512);
+      g.fillStyle = 'rgba(12,10,9,0.55)';            /* tire ruts in the rows */
+      g.fillRect(112, 0, 7, 512); g.fillRect(134, 0, 7, 512);
+      g.fillRect(346, 0, 7, 512); g.fillRect(368, 0, 7, 512);
+    })(lotCanvas.getContext('2d'));
+    var lotTex24 = srgb(new THREE.CanvasTexture(lotCanvas));
+    lotTex24.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    var lot = new THREE.Mesh(new THREE.PlaneGeometry(28, 47), new THREE.MeshLambertMaterial({ map: lotTex24 }));
+    lot.rotation.x = -Math.PI / 2;
+    lot.position.set(0, 0.05, -24);
+    drivein.add(lot);
+
+    /* rope fence around the lot's road/front edges: ONE static LineSegments in
+       local space — moves with the group, zero per-frame cost, night-wire read */
+    (function () {
+      var pts = [];
+      var postXY = [];
+      var k24;
+      for (k24 = 0; k24 <= 9; k24++) { postXY.push([13.5, -1.5 - k24 * 5]); postXY.push([-13.5, -1.5 - k24 * 5]); }
+      for (k24 = 0; k24 <= 5; k24++) postXY.push([-13.5 + k24 * 5.4, -46.5]);
+      for (k24 = 0; k24 < postXY.length; k24++) {
+        pts.push(postXY[k24][0], 0, postXY[k24][1], postXY[k24][0], 1.0, postXY[k24][1]);   /* post */
+      }
+      for (k24 = 0; k24 < postXY.length - 1; k24++) {  /* rope at post-top height, perimeter run */
+        var a24 = postXY[k24], b24 = postXY[k24 + 1];
+        if (Math.abs(a24[0] - b24[0]) > 6.5 && Math.abs(a24[1] - b24[1]) > 6.5) continue;   /* skip the corner jump */
+        pts.push(a24[0], 0.86, a24[1], b24[0], 0.86, b24[1]);
+      }
+      var fg = new THREE.BufferGeometry();
+      fg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+      drivein.add(new THREE.LineSegments(fg, new THREE.LineBasicMaterial({ color: 0x17130f })));
+    })();
+
+    /* parked iron: 4 silhouettes facing the screen (props only — NOTHING from the
+       w18 traffic builder; no movement, no lights). Faint Basic windshield pane
+       + dim tail panes facing the rider (parked-at-the-movie read from the road). */
+    function parkedCar(x, z, yaw, paint) {
+      var g24 = new THREE.Group();
+      var bodyMat24 = new THREE.MeshLambertMaterial({ color: paint });
+      var body24 = new THREE.Mesh(new THREE.BoxGeometry(1.85, 1.05, 4.3), bodyMat24);
+      body24.position.y = 0.68;
+      g24.add(body24);
+      var cab = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.7, 2.2), bodyMat24);
+      cab.position.set(0, 1.55, -0.3);
+      g24.add(cab);
+      var glass = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.55),
+        new THREE.MeshBasicMaterial({ color: 0x5d7290 }));
+      glass.position.set(0, 1.62, 0.81);
+      glass.rotation.x = -0.28;
+      g24.add(glass);
+      var tail = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.32),
+        new THREE.MeshBasicMaterial({ color: 0x6b1a16 }));
+      tail.position.set(0, 0.86, -2.16);
+      tail.rotation.y = Math.PI;
+      g24.add(tail);
+      g24.position.set(x, 0, z);
+      g24.rotation.y = yaw;
+      drivein.add(g24);
+    }
+    parkedCar(-7.6, -13.2, 0.07, 0x232830);
+    parkedCar(1.8, -13.8, -0.1, 0x1d2127);
+    parkedCar(-2.6, -25.6, 0.12, 0x26221a);
+    parkedCar(6.8, -26.2, -0.06, 0x20242c);
+
+    /* concession shack at the lot's far end: dark box + warm booth window
+       (diner doctrine) + one tiny red projector pip (tower-beacon precedent) */
+    var shack = new THREE.Mesh(new THREE.BoxGeometry(5.4, 3.1, 4.2), new THREE.MeshLambertMaterial({ color: 0x0f0c09 }));
+    shack.position.set(0.5, 1.55, -44);
+    drivein.add(shack);
+    var shackRoof = new THREE.Mesh(new THREE.BoxGeometry(6.1, 0.24, 4.9), steel24);
+    shackRoof.position.set(0.5, 3.24, -44);
+    drivein.add(shackRoof);
+    var booth = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 0.85), new THREE.MeshBasicMaterial({ color: 0xffc078 }));
+    booth.position.set(1.35, 2.0, -41.86);
+    drivein.add(booth);
+    var door24 = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 1.8), new THREE.MeshBasicMaterial({ color: 0x080706 }));
+    door24.position.set(-1.1, 0.9, -41.86);
+    drivein.add(door24);
+    var pip = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 5), new THREE.MeshBasicMaterial({ color: 0xff4030 }));
+    pip.material.color.setRGB(1.9, 0.3, 0.24);
+    pip.material.fog = false;
+    pip.position.set(-0.2, 2.78, -41.84);
+    drivein.add(pip);
+    var shackGlow = new THREE.PointLight(0xffa050, 0.7, 26);   /* same warm-pool doctrine as the diner door */
+    shackGlow.position.set(0.5, 2.6, -40.6);
+    drivein.add(shackGlow);
+
+    /* THE SIGNATURE — projector beam, w5 headlight-cone doctrine verbatim in
+       spirit: additive, alpha 0 at BOTH ends, depthWrite false, renderOrder 2,
+       hidden when it can't read as a beam (camMode 2 hood cam unless facing).
+       Dust-in-the-beam base opacity 0.12 (end-on views fade it — see below);
+       cool white so it never reads fire. */
+    (function () {
+      var c24 = makeCanvas(64, 256), g24 = c24.getContext('2d');
+      var lg24 = g24.createLinearGradient(0, 0, 0, 256);   /* canvas top = v0 = narrow end (at the booth) */
+      lg24.addColorStop(0.00, 'rgba(255,255,255,0)');      /* no hot disc at the aperture */
+      lg24.addColorStop(0.10, 'rgba(255,255,255,0.72)');
+      lg24.addColorStop(0.38, 'rgba(255,255,255,0.3)');
+      lg24.addColorStop(0.72, 'rgba(255,255,255,0.07)');
+      lg24.addColorStop(1.00, 'rgba(255,255,255,0)');      /* dies before the screen face */
+      g24.fillStyle = lg24;
+      g24.fillRect(0, 0, 64, 256);
+      driveinBeamMat = new THREE.MeshBasicMaterial({
+        map: srgb(new THREE.CanvasTexture(c24)),
+        color: 0x9fb6e8, transparent: true, opacity: 0.12, fog: false,
+        blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, side: THREE.DoubleSide
+      });
+      var bgeo = new THREE.CylinderGeometry(7.0, 0.5, 41.5, 18, 1, true);  /* wide end (top) at the screen */
+      bgeo.rotateX(Math.PI / 2);                            /* +Y (wide) now points +z (up-lot) */
+      bgeo.translate(0, 0, 41.5 / 2);                       /* narrow end at local origin */
+      driveinBeam = new THREE.Mesh(bgeo, driveinBeamMat);
+      driveinBeam.rotation.x = -0.187;                      /* rises booth -> screen center */
+      driveinBeam.position.set(0.9, 2.05, -41.6);
+      driveinBeam.renderOrder = 2;
+      /* w5 doctrine: hide when it can't read as a beam (camMode 2 hood cam unless
+         facing) + W24 tuning addendum: seen END-ON from the road the open cone
+         stacks into a grey additive disc that washes the screen art (measured:
+         face mean +0.15 with the art gone milk-grey). Fade toward a 30% aura as
+         the view aligns with the beam axis — side/pass views keep the full 0.12
+         shaft. Two module-scope temps: zero per-frame allocation. */
+      var bvAxis = new THREE.Vector3(), bvToCam = new THREE.Vector3(), bq24 = new THREE.Quaternion();
+      driveinBeam.onBeforeRender = function () {
+        var chase24 = (camMode !== 2);
+        var facing24 = Math.abs(((Math.atan2(camera.position.x - game.x, camera.position.z - game.z) + Math.PI * 2) % (Math.PI * 2)) - Math.PI);
+        var end24 = 0;
+        if (chase24 && facing24 <= 0.9) end24 = 1;          /* hood cam far side: no fade needed */
+        else {
+          driveinBeam.getWorldQuaternion(bq24);
+          bvAxis.set(0, 0.186, 0.983).applyQuaternion(bq24);
+          driveinBeam.getWorldPosition(bvToCam);
+          bvToCam.copy(camera.position).sub(bvToCam).normalize();
+          end24 = Math.abs(bvAxis.dot(bvToCam));
+        }
+        var fade24 = end24 <= 0.94 ? 1 : Math.max(0.3, (0.985 - end24) / 0.045);
+        driveinBeamMat.opacity = 0.12 * fade24;
+        driveinBeam.visible = chase24 || facing24 > 0.9;
+      };
+      drivein.add(driveinBeam);
+    })();
+
+    /* WEATHER INTEGRATION: screen glow pooling on the wet lot — one w19-style
+       additive glow quad living IN the group (recycles with the landmark; the
+       w19 streak system is read-only, so the pool drives itself in
+       onBeforeRender from the module wetness scalar: no w19 edits, no allocs). */
+    (function () {
+      var pc24 = makeCanvas(256, 256), pg24 = pc24.getContext('2d');
+      var rg24 = pg24.createRadialGradient(128, 128, 8, 128, 128, 122);
+      rg24.addColorStop(0.00, 'rgba(190,214,255,0.8)');
+      rg24.addColorStop(0.4, 'rgba(178,202,248,0.4)');
+      rg24.addColorStop(0.75, 'rgba(168,196,238,0.12)');
+      rg24.addColorStop(1.00, 'rgba(168,196,238,0)');
+      pg24.fillStyle = rg24;
+      pg24.fillRect(0, 0, 256, 256);
+      driveinPoolMat = new THREE.MeshBasicMaterial({
+        map: srgb(new THREE.CanvasTexture(pc24)),
+        transparent: true, opacity: 0, fog: false,
+        blending: THREE.AdditiveBlending, depthWrite: false
+      });
+      var poolGeo = new THREE.PlaneGeometry(20, 28);
+      poolGeo.rotateX(-Math.PI / 2);
+      var pool = new THREE.Mesh(poolGeo, driveinPoolMat);
+      pool.position.set(0, 0.09, -10);
+      pool.renderOrder = 2;
+      pool.onBeforeRender = function () {
+        var near24 = clamp(1 - Math.abs(game.z - driveinMark.z) / 340, 0, 1);
+        driveinPoolMat.opacity = wetness * 0.8 * near24;   /* dry ride = 0, zero visual change.
+                                                              0.8 peak: ACES eats most of an additive
+                                                              glow on dark gravel — tuned so the wet-lot
+                                                              patch reads like the diner streak family */
+      };
+      drivein.add(pool);
+    })();
+  })();
+  scene.add(drivein);
+  driveinMark = { grp: drivein, z: 5170, off: -41, yaw: -0.32, drivein: true };
+  landmarks.push(driveinMark);
+
+  /* rig/probe handle (same spirit as HogWet/HogTraffic — observation only) */
+  window.HogDrivein = {
+    state: function () {
+      var tex24 = 'none';
+      if (driveinScreenMat.map && driveinScreenMat.map.image) {
+        tex24 = driveinScreenMat.map.image.src ? 'jpg' : 'canvas';
+      }
+      return { z: +driveinMark.z.toFixed(1), gx: +drivein.position.x.toFixed(2), gz: +drivein.position.z.toFixed(2),
+        visible: drivein.visible, kids: drivein.children.length,
+        beam: driveinBeam ? driveinBeam.visible : false, beamOp: driveinBeamMat ? +driveinBeamMat.opacity.toFixed(3) : 0,
+        poolOp: driveinPoolMat ? +driveinPoolMat.opacity.toFixed(3) : 0,
+        wet: +wetness.toFixed(3), tex: tex24 };
+    }
+  };
+
   landmarks.forEach(placeLandmark);
 
   /* ---------------- bike factory ---------------- */
