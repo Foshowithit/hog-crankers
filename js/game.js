@@ -383,15 +383,47 @@
      the shader via the color chunk (r128 resolves chunk includes AFTER onBeforeCompile, so the
      raw gl_FragColor literal is not visible to string patching): ~55% dim at the road edge,
      full brightness past ~46 units. diffuse dimmed pre-lighting keeps road + distance as-is. */
+  /* WAVE 20 THE WIND: shared uniforms — mutated per frame by driveCornWind and referenced
+     (never copied) into the compiled program via Object.assign(sh.uniforms, ...), so value
+     updates propagate GPU-side with zero allocation. uGust scales the whole field with the
+     weather clock; uBike drives the parting. */
+  var cornWindU = { uTime: { value: 0 }, uGust: { value: 0.10 }, uBike: { value: new THREE.Vector3(0, 0, -1e3) } };
   cornMat.onBeforeCompile = function (sh) {
+    Object.assign(sh.uniforms, cornWindU);
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', 'varying float vCornDist;\n#include <common>')
-      .replace('#include <project_vertex>', '#include <project_vertex>\nvCornDist = -mvPosition.z;');
+      .replace('#include <common>', 'varying float vCornDist;\nuniform float uTime;\nuniform float uGust;\nuniform vec3 uBike;\n#include <common>')
+      /* WAVE 20: project_vertex expanded in place (r128) so the sway lands BETWEEN the
+         instanceMatrix multiply and the modelViewMatrix multiply. There mvPosition is in
+         WORLD space (these meshes sit at the scene root with identity model matrices) —
+         displacing there keeps wind direction consistent across randomly-rotated instances;
+         displacing `transformed` before instanceMatrix would rotate each blade's wind by its
+         own yaw. W9's distance-dim (vCornDist) is kept, now reading the displaced depth. */
+      .replace('#include <project_vertex>', [
+        'vec4 mvPosition = vec4( transformed, 1.0 );',
+        '#ifdef USE_INSTANCING',
+        '\tmvPosition = instanceMatrix * mvPosition;',
+        '#endif',
+        'float hF20 = position.y * 0.4;',                                        /* bend the top, not the root (geo y 0..2.5) */
+        'float wx20 = mvPosition.x, wz20 = mvPosition.z;',
+        /* two crossing wave fields so gust fronts visibly TRAVEL across the field */
+        'float wave20 = sin(uTime * 1.6 + wx20 * 0.13 + wz20 * 0.09) * 0.5 + sin(uTime * 0.7 + wx20 * 0.05 - wz20 * 0.06) * 0.5;',
+        'float flut20 = sin(uTime * 7.3 + wx20 * 2.9 + wz20 * 1.7) * 0.25;',     /* per-blade shimmer */
+        'mvPosition.x += (wave20 * 0.6 + flut20) * uGust * hF20;',               /* wind out of the WEST (+x lean) */
+        'mvPosition.z += (wave20 * 0.35) * uGust * hF20;',
+        /* parting: blades lean AWAY from the bike, strongest right beside it */
+        'vec2 dw20 = vec2(mvPosition.x - uBike.x, mvPosition.z - uBike.z);',
+        'float dd20 = length(dw20);',
+        'float part20 = smoothstep(4.5, 0.5, dd20);',
+        'mvPosition.xz += normalize(dw20 + vec2(1e-4)) * part20 * (0.9 * hF20);',
+        'mvPosition = modelViewMatrix * mvPosition;',
+        'gl_Position = projectionMatrix * mvPosition;',
+        'vCornDist = -mvPosition.z;'
+      ].join('\n'));
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', 'varying float vCornDist;\n#include <common>')
       .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= (0.45 + 0.55 * smoothstep(6.0, 46.0, vCornDist));');
   };
-  cornMat.customProgramCacheKey = function () { return 'hog-corn-dim9'; };
+  cornMat.customProgramCacheKey = function () { return 'hog-corn-wind20'; };
   var cornMeshA = new THREE.InstancedMesh(cornGeo, cornMat, CORN_N);
   var cornMeshB = new THREE.InstancedMesh(cornGeo, cornMat, CORN_N);
   var corn = [];
@@ -1844,6 +1876,39 @@
     strikeNow: strikeNow
   };
 
+  /* ---------------- WAVE 20 THE WIND ----------------
+     The corn answers the weather. One scalar drives the whole field: uGust, eased toward a
+     per-phase target off the SAME clock wave 11 owns (fog / wetness) — calm breeze 0.10
+     (subtle life even on the title screen), building 0.35, storm 1.0 with a slow gust BEAT
+     (~7s swell: 1.0 - 0.25*(0.5+0.5*sin(t*0.9))) so gusts visibly roll, clearing 0.45
+     decaying back to the calm breeze across the phase. Runs per frame on BOTH paths that
+     render corn: updateWeather (ride/overcrank) and the title branch — the title orbit
+     shows living corn. uBike tracks the bike world pos (parked on the apron at title);
+     the shader parts the corn away from it. All displacement is vertex-side via
+     cornMat.onBeforeCompile: zero new draw calls, zero per-frame CPU matrix updates. */
+  var cornWindTargets = { calm: 0.10, building: 0.35, storm: 1.0, clearing: 0.45 };
+  function driveCornWind(dt) {
+    cornWindU.uTime.value += dt;
+    var tgt20 = cornWindTargets[weather.phase] || 0.10;
+    if (weather.phase === 'storm') {
+      tgt20 *= 1.0 - 0.25 * (0.5 + 0.5 * Math.sin(cornWindU.uTime.value * 0.9));
+    } else if (weather.phase === 'clearing') {
+      var cp20 = clamp(weather.t / Math.max(weather.dur, 0.001), 0, 1);
+      tgt20 = lerp(0.45, 0.10, cp20);
+    }
+    cornWindU.uGust.value = lerp(cornWindU.uGust.value, tgt20, 1 - Math.exp(-1.5 * dt));
+    cornWindU.uBike.value.set(game.x, 0, game.z);
+  }
+  window.HogWind = {
+    state: function () {
+      return { t: +cornWindU.uTime.value.toFixed(2), gust: +cornWindU.uGust.value.toFixed(3),
+        bike: [+cornWindU.uBike.value.x.toFixed(1), +cornWindU.uBike.value.z.toFixed(1)] };
+    },
+    /* rig-only A/B handle: park the parting origin anywhere for a same-frame
+       before/after (driveCornWind re-pins uBike to the bike next frame it runs) */
+    part: function (x, z) { cornWindU.uBike.value.set(+x || 0, 0, +z || 0); return true; }
+  };
+
   /* WAVE 11 per-frame: phase clock, fog breathing, bolt scheduler + flicker spool, rain fall. */
   var rainCam = new THREE.Vector3();                          /* scratch — no per-frame alloc */
   function updateWeather(dt) {
@@ -1918,6 +1983,7 @@
     /* WAVE 19: wetness rides the same phase clock (storm soak / clearing hold / calm dry).
        Function-declared above; this call site sits inside updateWeather's cadence. */
     driveWetness(dt);
+    driveCornWind(dt);   /* WAVE 20 THE WIND: gust scalar + bike tracker ride the same clock */
   }
 
   /* ---------------- WAVE 19 STORM SHINE: the storm leaves the road shining ----------------
@@ -3070,6 +3136,7 @@
       if (typeof game !== 'undefined') { game.x = player.position.x; game.z = player.position.z; }
       driveKickstand(dt);   /* WAVE 16: stand deployed + lean + idle life at title rest */
       updateDust(dt);   /* WAVE 16: the rest-state exhaust puff lives and dies here (title has no other dust tick) */
+      driveCornWind(dt);   /* WAVE 20 THE WIND: the title breeze — corn alive in the orbit (calm 0.10, storm if forced) */
       if (!titleFlyby.update(dt)) {           /* WAVE 12: flyby drives the camera; orbit takes over on settle/skip */
         /* WAVE 12 judge fix: radius 9 put the orbit ON the lit apron (pale-slab frames);
            r15 keeps the camera off the pad with the glowing station behind the rider */
