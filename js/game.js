@@ -1848,6 +1848,7 @@
     lightSpike = weather.boltT;
     if (Math.random() < 0.3) buildBolt();
     else killBolt();
+    if (window.HogStormAudio) window.HogStormAudio.strike(boltX, boltZ);   /* WAVE 21: thunder trails the flash */
     return { phase: weather.phase, flicks: weather.flicks, bolt: bolt.visible };
   }
   function resetWeather() {
