@@ -1985,6 +1985,7 @@
        Function-declared above; this call site sits inside updateWeather's cadence. */
     driveWetness(dt);
     driveCornWind(dt);   /* WAVE 20 THE WIND: gust scalar + bike tracker ride the same clock */
+    driveSplashes(dt);   /* WAVE 22 RAIN LANDS: splash pips + rings ride the same clock */
   }
 
   /* ---------------- WAVE 19 STORM SHINE: the storm leaves the road shining ----------------
@@ -2148,6 +2149,175 @@
       for (var i = 0; i < all.length; i++) ss.push(+all[i].material.opacity.toFixed(3));
       return { wetness: +wetness.toFixed(3), phase: weather.phase,
         fog: +scene.fog.density.toFixed(5), streaks: ss, wetOp: +(wetStripMat ? wetStripMat.opacity.toFixed(3) : 0) };
+    }
+  };
+
+  /* ---------------- WAVE 22 RAIN LANDS ----------------
+     The storm trinity completes: road gets wet (w19) -> rain falls (w11) -> rain
+     visibly LANDS (w22). Where drops hit the tarmac a tiny glint pip pops up and
+     dies in ~0.15s, and ~30% of drops also open an expanding flat ring that rolls
+     ahead of the bike through the headlight pool. Pooled + recycled exactly like
+     the skeleton crowd below: build N once, drive transforms per frame, zero
+     allocs. Spawn rate rides the SAME weather clock w11/w19 own: storm full,
+     building sparse (first fat drops), clearing a decaying tail, calm 0.
+     BRIGHTNESS IS COUPLED TO WETNESS (w19): one scalar (0.45 + 0.55*wetness)
+     multiplies every pip + ring opacity — the same rain reads ~2x brighter once
+     the road is soaked, so the road visibly "catches" the rain. Spawn x biases
+     toward the three wheel-track strip offsets (drops pooling in the tracks).
+     Gates: ride/overcrank only (driver lives in updateWeather), one-shot degrade
+     — rainDead kills splashes the same tick it kills the streaks. Sub-bloom:
+     peak effective alpha ~0.5 (< the 0.72 threshold) — glints, not fireflies. */
+  var SPLASH_N = IS_TOUCH ? 40 : 90;
+  var RING_N = IS_TOUCH ? 12 : 26;
+  var STRIPS_22 = [6.8, 0, -6.2];               /* w19 wet-strip offsets (road-local) */
+
+  function splashDotCanvas() {                  /* POT 32: soft glint dot */
+    var c = makeCanvas(32, 32), g = c.getContext('2d');
+    var grd = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+    grd.addColorStop(0.0, 'rgba(255,255,255,0.95)');
+    grd.addColorStop(0.28, 'rgba(216,228,244,0.55)');
+    grd.addColorStop(0.62, 'rgba(170,190,220,0.16)');
+    grd.addColorStop(1.0, 'rgba(170,190,220,0)');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, 32, 32);
+    return c;
+  }
+  function splashRingCanvas() {                 /* POT 64: fat soft ring — the band sits
+                                                   well inside the quad so the circle reads
+                                                   at its full diameter on the tarmac */
+    var c = makeCanvas(64, 64), g = c.getContext('2d');
+    var grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0.42, 'rgba(190,206,232,0)');
+    grd.addColorStop(0.58, 'rgba(190,206,232,0.5)');
+    grd.addColorStop(0.68, 'rgba(190,206,232,0.8)');
+    grd.addColorStop(0.80, 'rgba(190,206,232,0.28)');
+    grd.addColorStop(0.93, 'rgba(190,206,232,0)');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, 64, 64);
+    return c;
+  }
+  var pipTex22 = srgb(new THREE.CanvasTexture(splashDotCanvas()));
+  var ringTex22 = srgb(new THREE.CanvasTexture(splashRingCanvas()));
+
+  var splashPool = [], ringPool22 = [], cursPip = 0, cursRing = 0, ip22;
+  for (ip22 = 0; ip22 < SPLASH_N; ip22++) {
+    var pip22 = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: pipTex22, color: 0xdce8f8, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: true
+    }));
+    pip22.renderOrder = 3;                      /* above wet strips 1 + streaks 2, below car pools 4/5 */
+    pip22.visible = false;
+    scene.add(pip22);
+    splashPool.push({ spr: pip22, t: 0, life: 0.15, size: 0.35, rise: 0.18, wetF: 1 });
+  }
+  var ringGeo22 = new THREE.PlaneGeometry(1, 1);
+  ringGeo22.rotateX(-Math.PI / 2);              /* lie flat on the tarmac */
+  for (ip22 = 0; ip22 < RING_N; ip22++) {
+    var ringM22 = new THREE.Mesh(ringGeo22, new THREE.MeshBasicMaterial({
+      map: ringTex22, color: 0xbcd0ea, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: true
+    }));
+    ringM22.renderOrder = 3;
+    ringM22.visible = false;
+    /* per-instance y stagger 0.02..0.05: overlapping rings never share a plane,
+       no z-fighting at these separations */
+    var ry22 = 0.02 + (ip22 % 9) * 0.00375;
+    ringM22.position.y = ry22;
+    scene.add(ringM22);
+    ringPool22.push({ m: ringM22, y: ry22, t: 0, life: 0.35, size: 1.4, wetF: 1 });
+  }
+
+  var splashCredit = 0, splashRate = 0, splashOn = false;
+  var alivePips = 0, aliveRings = 0;
+  var spawnTotal = 0, spawnStrip = 0, spawnOnRoad = 0;
+
+  function killSplashes22() {
+    var i;
+    for (i = 0; i < SPLASH_N; i++) {
+      var p = splashPool[i];
+      if (p.spr.visible) { p.spr.visible = false; p.spr.material.opacity = 0; }
+    }
+    for (i = 0; i < RING_N; i++) {
+      var r = ringPool22[i];
+      if (r.m.visible) { r.m.visible = false; r.m.material.opacity = 0; }
+    }
+    alivePips = 0; aliveRings = 0; splashCredit = 0;
+  }
+
+  function driveSplashes(dt) {
+    /* rate off the w11 phase clock: storm full / building sparse / clearing
+       decaying tail / calm 0. Touch tier runs the smaller pool at a scaled rate. */
+    var ph = weather.phase, rate = 0;
+    if (ph === 'storm') rate = 90;
+    else if (ph === 'building') rate = 25;
+    else if (ph === 'clearing') rate = 15 * (1 - clamp(weather.t / Math.max(weather.dur, 0.001), 0, 1));
+    if (IS_TOUCH) rate *= 0.45;
+    splashRate = rate;
+    var live = (mode === 'ride' || mode === 'overcrank') && !rainDead && rate > 0.5;
+    splashOn = live;
+    if (!live) {
+      if (alivePips + aliveRings > 0) killSplashes22();
+      return;
+    }
+    /* WAVE 19 COUPLING: same rain, brighter road — one wetness scalar gates all
+       splash brightness (dry 0.45 -> soaked 1.0, ~2.2x) */
+    var wetF = 0.45 + 0.55 * wetness;
+    splashCredit += rate * dt;
+    var budget = 4;                             /* per-frame cap: no post-hitch burst */
+    while (splashCredit >= 1 && budget > 0) {
+      splashCredit -= 1; budget--;
+      var z22 = game.z + rand(8, 55);           /* ahead of the bike, in the visible band */
+      var off22;
+      if (Math.random() < 0.55) { off22 = STRIPS_22[(Math.random() * 3) | 0] + rand(-1.1, 1.1); spawnStrip++; }
+      else off22 = rand(-11, 11);
+      var x22 = roadX(z22) + off22;
+      spawnTotal++;
+      if (Math.abs(off22) <= 11.5) spawnOnRoad++;
+      var p = splashPool[cursPip]; cursPip = (cursPip + 1) % SPLASH_N;
+      if (!p.spr.visible) alivePips++;
+      p.t = 0; p.life = rand(0.12, 0.2);
+      p.size = rand(0.25, 0.5); p.rise = rand(0.1, 0.25); p.wetF = wetF;
+      p.spr.position.set(x22, 0.02 + 0.35 * p.size, z22);
+      p.spr.visible = true;
+      if (Math.random() < 0.3) {
+        var rg = ringPool22[cursRing]; cursRing = (cursRing + 1) % RING_N;
+        if (!rg.m.visible) aliveRings++;
+        rg.t = 0; rg.size = rand(1.3, 1.7); rg.wetF = wetF;
+        rg.m.position.set(x22 + rand(-0.2, 0.2), rg.y, z22 + rand(-0.2, 0.2));
+        rg.m.visible = true;
+      }
+    }
+    if (splashCredit > 3) splashCredit = 3;
+    var i;
+    for (i = 0; i < SPLASH_N; i++) {
+      var pp = splashPool[i];
+      if (!pp.spr.visible) continue;
+      pp.t += dt;
+      if (pp.t >= pp.life) { pp.spr.visible = false; pp.spr.material.opacity = 0; alivePips--; continue; }
+      var f = pp.t / pp.life;
+      pp.spr.material.opacity = pp.wetF * 0.55 * Math.sin(f * Math.PI);
+      pp.spr.position.y = 0.02 + 0.35 * pp.size + pp.rise * f;   /* bottom edge kisses the tarmac */
+      var s22 = pp.size * (0.7 + 0.3 * f);
+      pp.spr.scale.set(s22, s22, 1);
+    }
+    for (i = 0; i < RING_N; i++) {
+      var rr = ringPool22[i];
+      if (!rr.m.visible) continue;
+      rr.t += dt;
+      if (rr.t >= rr.life) { rr.m.visible = false; rr.m.material.opacity = 0; aliveRings--; continue; }
+      var f2 = rr.t / rr.life;
+      var d22 = 0.3 + (rr.size - 0.3) * f2;     /* expand 0.3 -> ~1.5u while fading */
+      rr.m.scale.set(d22, 1, d22);
+      rr.m.material.opacity = rr.wetF * 0.55 * Math.pow(1 - f2, 1.5);
+    }
+  }
+  window.HogRain = {
+    state: function () {
+      return { on: splashOn, rate: +splashRate.toFixed(1),
+        active: alivePips + aliveRings, pips: alivePips, rings: aliveRings,
+        pool: [SPLASH_N, RING_N],
+        wet: +wetness.toFixed(3), phase: weather.phase,
+        spawned: spawnTotal, strip: spawnStrip, onroad: spawnOnRoad };
     }
   };
 
