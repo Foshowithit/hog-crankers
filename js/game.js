@@ -259,6 +259,104 @@
     }
   }
 
+  /* ---------------- WAVE 23 STORM OVERHEAD: churning cloud deck + lightning backlight ----------------
+     The storm finally owns the sky. 3 huge cloud bands hug the dome high overhead
+     (SphereGeometry latitude rings at r 1470/1445/1420, BackSide, inside the dome's
+     1500 — parented to skyDome so they follow the player with zero new call sites).
+     Textures are POT 1024x512 canvases: 3 octaves of value noise (tileable in u),
+     thresholded into traveling shelf masses and cut by a ragged flat-bottom anvil
+     envelope — a storm shelf, not puffs, not noise mush.
+     DRAW ORDER IS THE POINT: dome (opaque) -> stars / moon / shooting stars
+     (transparent, RO0) -> cloud bands RO1 -> rain RO2 -> bolt + halo RO3. The bands
+     are dark violet-grey NormalBlended, so a storm sky OCCLUDES the stars behind the
+     deck (and swallows the moon) instead of shining through it.
+     OPACITY DRIVER mirrors the w20 gust pattern: eased per-phase targets off the SAME
+     w11 clock (calm 0 -> building 0.35 -> storm 0.78 -> clearing 0.4 decaying across
+     the phase, tau ~0.67s). Each band's texture.offset.x drifts at its own speed —
+     built-in texture offset, zero shader work, zero per-frame allocs. Bands skip
+     drawing entirely below op 0.004: the calm/title sky stays pixel-identical.
+     LIGHTNING BACKLIGHT: the same lightSpike the hemi ride pegs cloudSpike; every
+     band's material.color lerps toward pale violet-white and decays in 0.16s, so a
+     strike lights the deck from behind — lightning reads SOURCED and huge. Sub-bloom
+     by construction: the peak lit color keeps rendered cloud luminance under the 0.72
+     bloom threshold (rig-verified by pixel probe on both tiers). */
+  var cloudDeck = (function () {
+    function sstep23(t) { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); }
+    function noiseLattice(cols, rows) {
+      var l = new Float32Array(cols * (rows + 1));
+      for (var i = 0; i < l.length; i++) l[i] = Math.random();
+      return l;
+    }
+    /* value noise on a lattice; u wraps (seamless around the dome), v clamps */
+    function vn(lut, cols, rows, u, v) {
+      var x = u * cols, y = v * rows;
+      var x0 = Math.floor(x), y0 = Math.floor(y);
+      var fx = sstep23(x - x0), fy = sstep23(y - y0);
+      var x0m = x0 % cols, x1m = (x0 + 1) % cols;
+      var y1 = Math.min(y0 + 1, rows);
+      var a = lut[y0 * cols + x0m], b = lut[y0 * cols + x1m];
+      var c = lut[y1 * cols + x0m], d = lut[y1 * cols + x1m];
+      return lerp(lerp(a, b, fx), lerp(c, d, fx), fy);
+    }
+    /* POT 1024x512 anvil-shelf alpha: 3 octave fBm (u-stretched: shelves, not puffs)
+       -> thresholded masses, denser toward the base -> ragged flat-bottom cut.
+       Canvas top = band top (soft fade), base cut near v 0.72-0.9. */
+    function cloudTexture() {
+      var W = 1024, H = 512;
+      var cv = makeCanvas(W, H), g = cv.getContext('2d');
+      var img = g.createImageData(W, H), dd = img.data;
+      var L1 = noiseLattice(5, 7), L2 = noiseLattice(11, 15), L3 = noiseLattice(22, 30), LB = noiseLattice(5, 3), LW = noiseLattice(4, 4), LW2 = noiseLattice(8, 8);
+      for (var y = 0; y < H; y++) {
+        var v = y / H;
+        var topFade = sstep23(v / 0.16);
+        var dense = 0.14 * sstep23((v - 0.5) / 0.4);          /* shelf packs solid near its base */
+        for (var x = 0; x < W; x++) {
+          var u = x / W;
+          var n = 0.52 * vn(L1, 5, 7, u, v) + 0.31 * vn(L2, 11, 15, u, v) + 0.17 * vn(L3, 22, 30, u, v);
+          var base = 0.80 + 0.16 * vn(LB, 5, 3, u, 0.37);       /* ragged anvil cut line */
+          var env = topFade * (1 - sstep23((v - base) / 0.05));
+          var a = sstep23((n - (0.43 - dense)) * 4.2) * env;
+          /* thin translucency between the masses — an overcast shelf never shows
+             clear sky (stars stop shining through the gaps) */
+          var wisp = (0.34 + 0.22 * vn(LW, 4, 4, u, v * 0.7 + 0.3) + 0.10 * vn(LW2, 8, 8, u, v)) * env;
+          if (wisp > a) a = wisp;
+          var o = (y * W + x) * 4;
+          var sh = 205 + 50 * sstep23((n - 0.35) * 2.2);        /* subtle internal shading */
+          dd[o] = sh * 0.97; dd[o + 1] = sh * 0.95; dd[o + 2] = sh;
+          dd[o + 3] = a * 255;
+        }
+      }
+      g.putImageData(img, 0, 0);
+      var t = srgb(new THREE.CanvasTexture(cv));
+      t.wrapS = THREE.RepeatWrapping;                           /* u drifts; v clamped */
+      return t;
+    }
+    function band(cfg) {
+      var tex = cloudTexture();
+      tex.repeat.x = cfg.rep;
+      var mat = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, blending: THREE.NormalBlending,
+        fog: false, depthWrite: false, side: THREE.BackSide, opacity: 0
+      });
+      mat.color.setRGB(cfg.col[0], cfg.col[1], cfg.col[2]);     /* raw linear — tuned by screenshot */
+      var mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(cfg.r, 48, 1, 0, Math.PI * 2, cfg.t0, cfg.tl), mat);
+      mesh.renderOrder = 1;                                     /* after dome/stars(0), before rain(2) */
+      mesh.visible = false;
+      skyDome.add(mesh);                                        /* rides the dome's player-follow */
+      return { mesh: mesh, mat: mat, tex: tex, drift: cfg.drift, baseOp: cfg.op,
+        baseCol: mat.color.clone(),
+        /* peak lit texel (map shading maxes at 1.0) x 0.66 = 0.66 linear < 0.72 bloom
+           threshold — sub-bloom by construction, rig-verified */
+        litCol: new THREE.Color(0.55, 0.52, 0.66) };
+    }
+    return [
+      band({ r: 1470, t0: 0.166 * Math.PI, tl: 0.118 * Math.PI, rep: 2, drift: 0.0028, col: [0.085, 0.072, 0.125], op: 1.0 }),
+      band({ r: 1445, t0: 0.272 * Math.PI, tl: 0.146 * Math.PI, rep: 3, drift: 0.0052, col: [0.072, 0.060, 0.108], op: 0.95 }),
+      band({ r: 1420, t0: 0.420 * Math.PI, tl: 0.078 * Math.PI, rep: 3, drift: 0.0085, col: [0.060, 0.050, 0.090], op: 0.90 })
+    ];
+  })();
+
   /* ---------------- ground ---------------- */
   var groundTex = V.groundTexture ? V.groundTexture() : null;
   if (groundTex) {
@@ -1782,21 +1880,54 @@
     });
     rain = new THREE.Points(rainGeo, rainMat);
     rain.frustumCulled = false;
+    rain.renderOrder = 2;   /* WAVE 23: rain draws after the cloud deck (RO1) — drops stay in front of the shelf */
     rain.visible = false;
     scene.add(rain);
   }
 
   /* Transient sky bolt: ONE reused ribbon mesh (2 crossed planes), geometry rebuilt per strike,
      disposed after. Pale bone-white with a cool edge — lightning is a natural phenomenon,
-     not a volt-brand moment. fog:false so it reads at 100+ units like the tower beacon. */
+     not a volt-brand moment. fog:false so it reads at 100+ units like the tower beacon.
+     WAVE 23 seam fix (punch 11): the bolt used to bloom into a rectangular mip-box whose
+     faint edges crossed the painted sky-band seam. Now the core rides UNDER the 0.72
+     bloom threshold (opacity 0.62) and a hand-drawn radial halo sprite (the lampHalo
+     precedent) carries the glow softly — no box edge anywhere, and touch (no composer)
+     finally sees the same halo. Per-vertex RGBA alpha fades the ribbon's top out to
+     zero, so the hard topY cut can never read as a plane edge either.
+     WAVE 23 renderOrder 3: the bolt draws AFTER the cloud deck (RO1) — strikes punch
+     through the shelf instead of being dimmed by it. */
   var boltMat = new THREE.MeshBasicMaterial({ color: 0xdfe4ee, transparent: true, opacity: 0,
-    blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide });
+    blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide,
+    vertexColors: true });
   var bolt = new THREE.Group();
   var boltP1 = new THREE.Mesh(new THREE.BufferGeometry(), boltMat);
   var boltP2 = new THREE.Mesh(new THREE.BufferGeometry(), boltMat);   /* cross-plane: verts baked in the z-y plane, no mesh rotation */
+  boltP1.renderOrder = 3;   /* WAVE 23: above the cloud deck */
+  boltP2.renderOrder = 3;
   bolt.add(boltP1); bolt.add(boltP2);
   bolt.visible = false;
   scene.add(bolt);
+  /* WAVE 23: soft bolt glow — POT 128 radial sprite, additive, sub-bloom by construction
+     (peak add ~0.3 luminance). Hidden with the group by killBolt. */
+  var boltHalo = (function () {
+    var c = makeCanvas(128, 128), g = c.getContext('2d');
+    var rg = g.createRadialGradient(64, 64, 4, 64, 64, 64);
+    rg.addColorStop(0, 'rgba(226,228,244,0.9)');
+    rg.addColorStop(0.3, 'rgba(214,218,242,0.42)');
+    rg.addColorStop(0.55, 'rgba(206,212,240,0.18)');
+    rg.addColorStop(0.78, 'rgba(200,206,238,0.06)');
+    rg.addColorStop(1, 'rgba(198,204,236,0)');
+    g.fillStyle = rg;
+    g.fillRect(0, 0, 128, 128);
+    var sp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: srgb(new THREE.CanvasTexture(c)), transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: false
+    }));
+    sp.renderOrder = 3;
+    sp.visible = false;
+    bolt.add(sp);
+    return sp;
+  })();
   var boltVec = new THREE.Vector3();                          /* reused scratch — no per-frame alloc */
   var boltX = 0, boltZ = 0;                                   /* last strike ground position (for evidence poses) */
   function buildBolt() {                                      /* geometry lives only during flickers */
@@ -1805,11 +1936,23 @@
     bx = roadX(bz) + clamp(bx - roadX(bz), -140, 140);
     var verts = new Float32Array((segs + 1) * 2 * 3);
     var verts2 = new Float32Array((segs + 1) * 2 * 3);   /* cross-plane twin: same spine, depth in z */
+    var cols = new Float32Array((segs + 1) * 2 * 4);     /* WAVE 23: per-vertex RGBA — top fades to 0 */
+    var cols2 = new Float32Array((segs + 1) * 2 * 4);
     var x = bx, y = topY, wdt = rand(0.6, 1.1);
+    var midX = bx, midY = topY * 0.45;
     for (var s = 0; s <= segs; s++) {
       var f = s / segs;
       var cy = topY + (-6 - topY) * f;   /* ground at y=-6: the strike lands BEHIND the ridge line */
       if (s > 0 && s < segs) x += rand(-9, 9);
+      if (s === (segs >> 1)) { midX = x; midY = cy; }
+      /* WAVE 23: alpha 0 at the top end -> 1 by 30% down — the topY cut stops existing */
+      var k23 = clamp(f / 0.3, 0, 1);
+      var aRow = k23 * k23 * (3 - 2 * k23);
+      for (var vv = 0; vv < 2; vv++) {
+        var co = (s * 2 + vv) * 4;
+        cols[co] = 1; cols[co + 1] = 1; cols[co + 2] = 1; cols[co + 3] = aRow;
+        cols2[co] = 1; cols2[co + 1] = 1; cols2[co + 2] = 1; cols2[co + 3] = aRow;
+      }
       verts[s * 6] = x - wdt; verts[s * 6 + 1] = cy; verts[s * 6 + 2] = 0;
       verts[s * 6 + 3] = x + wdt; verts[s * 6 + 4] = cy; verts[s * 6 + 5] = 0;
       var zw = rand(0.6, 1.2);
@@ -1825,19 +1968,27 @@
     }
     boltP1.geometry.setIndex(idx);
     boltP1.geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    boltP1.geometry.setAttribute('color', new THREE.BufferAttribute(cols, 4));
     boltP2.geometry.dispose();
     boltP2.geometry = new THREE.BufferGeometry();
     boltP2.geometry.setIndex(idx.slice());
     boltP2.geometry.setAttribute('position', new THREE.BufferAttribute(verts2, 3));
+    boltP2.geometry.setAttribute('color', new THREE.BufferAttribute(cols2, 4));
     /* verts are baked in world x — the group carries only z (x offset 0, else x applies twice) */
     bolt.position.set(0, 0, bz);
     boltX = bx; boltZ = bz;
+    /* WAVE 23: halo hugs the spine's midpoint — soft sourced glow, no bloom box */
+    boltHalo.position.set(midX, midY, 0);
+    boltHalo.scale.set(26, topY * 0.62, 1);
+    boltHalo.material.opacity = 0.5;
+    boltHalo.visible = true;
     bolt.visible = true;
-    boltMat.opacity = 0.95;   /* visible immediately — the flicker spool only modulates while unpaused */
+    boltMat.opacity = 0.62;   /* visible immediately; sub-bloom core — the halo carries the glow */
   }
   function killBolt() {
     bolt.visible = false;
     boltMat.opacity = 0;
+    boltHalo.material.opacity = 0;
   }
 
   /* A strike = 2-3 quick flickers over 0.15-0.3s. Each flicker: DOM flash + sky-light spike;
@@ -1910,6 +2061,44 @@
     part: function (x, z) { cornWindU.uBike.value.set(+x || 0, 0, +z || 0); return true; }
   };
 
+  /* ---------------- WAVE 23 cloud driver ----------------
+     Same easing shape as driveCornWind: eased per-phase targets off the w11 clock.
+     Backlight pegs off lightSpike (the exact scalar the hemi/moon spike rides — read
+     only, no w11 behavior touched), decays 0.16s. Zero allocs: colors copied/lerped
+     in place, offsets mutated in place, visibility flags flip only at the edges. */
+  var cloudOp = 0, cloudSpike = 0;
+  var cloudTargets = { calm: 0, building: 0.35, storm: 0.78, clearing: 0.4 };
+  function driveClouds(dt) {
+    var tgt23 = cloudTargets[weather.phase] || 0;
+    if (weather.phase === 'clearing') {
+      tgt23 = lerp(0.4, 0.02, clamp(weather.t / Math.max(weather.dur, 0.001), 0, 1));
+    }
+    cloudOp = lerp(cloudOp, tgt23, 1 - Math.exp(-1.5 * dt));
+    if (lightSpike > 0) cloudSpike = 1;
+    else if (cloudSpike > 0) cloudSpike = Math.max(0, cloudSpike - dt / 0.16);
+    var lit = cloudSpike * (0.4 + 0.6 * clamp(cloudOp / 0.78, 0, 1));
+    for (var ci = 0; ci < cloudDeck.length; ci++) {
+      var bd = cloudDeck[ci];
+      bd.mat.opacity = cloudOp * bd.baseOp;
+      bd.mesh.visible = bd.mat.opacity > 0.004;   /* calm/title: no draw at all */
+      bd.tex.offset.x -= bd.drift * dt;           /* RepeatWrapping handles the wrap */
+      bd.mat.color.copy(bd.baseCol).lerp(bd.litCol, lit);
+    }
+  }
+  window.HogClouds = {
+    state: function () {
+      return {
+        bands: cloudDeck.map(function (b) { return +b.mat.opacity.toFixed(4); }),
+        drift: cloudDeck.map(function (b) { return +b.tex.offset.x.toFixed(4); }),
+        col: cloudDeck.map(function (b) {
+          return [+b.mat.color.r.toFixed(3), +b.mat.color.g.toFixed(3), +b.mat.color.b.toFixed(3)];
+        }),
+        spike: +cloudSpike.toFixed(4),
+        op: +cloudOp.toFixed(4)
+      };
+    }
+  };
+
   /* WAVE 11 per-frame: phase clock, fog breathing, bolt scheduler + flicker spool, rain fall. */
   var rainCam = new THREE.Vector3();                          /* scratch — no per-frame alloc */
   function updateWeather(dt) {
@@ -1947,8 +2136,12 @@
       var on = (((weather.boltT * 20) | 0) % 2 === 0);
       if (on) {
         flashScreen(rand(0.10, 0.22).toFixed(2));
-        boltMat.opacity = 0.95;
-      } else boltMat.opacity = 0.15;
+        boltMat.opacity = 0.62;               /* WAVE 23: sub-bloom core (was 0.95 + mip-box) */
+        boltHalo.material.opacity = 0.5;      /* WAVE 23: the soft halo carries the glow */
+      } else {
+        boltMat.opacity = 0.15;
+        boltHalo.material.opacity = 0.12;
+      }
       if (weather.boltT <= 0) killBolt();
     } else if (boltMat.opacity > 0) boltMat.opacity = 0;
 
@@ -1986,6 +2179,7 @@
     driveWetness(dt);
     driveCornWind(dt);   /* WAVE 20 THE WIND: gust scalar + bike tracker ride the same clock */
     driveSplashes(dt);   /* WAVE 22 RAIN LANDS: splash pips + rings ride the same clock */
+    driveClouds(dt);     /* WAVE 23 STORM OVERHEAD: cloud deck opacity + drift + backlight */
   }
 
   /* ---------------- WAVE 19 STORM SHINE: the storm leaves the road shining ----------------
@@ -3308,6 +3502,7 @@
       driveKickstand(dt);   /* WAVE 16: stand deployed + lean + idle life at title rest */
       updateDust(dt);   /* WAVE 16: the rest-state exhaust puff lives and dies here (title has no other dust tick) */
       driveCornWind(dt);   /* WAVE 20 THE WIND: the title breeze — corn alive in the orbit (calm 0.10, storm if forced) */
+      driveClouds(dt);     /* WAVE 23: deck eases even at title (calm 0 -> bands skip drawing) */
       if (!titleFlyby.update(dt)) {           /* WAVE 12: flyby drives the camera; orbit takes over on settle/skip */
         /* WAVE 12 judge fix: radius 9 put the orbit ON the lit apron (pale-slab frames);
            r15 keeps the camera off the pad with the glowing station behind the rider */
