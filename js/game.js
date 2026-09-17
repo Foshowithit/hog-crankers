@@ -4308,10 +4308,26 @@
     if (poleDirty || fenceDirty) wireGeo.attributes.position.needsUpdate = true;
     var junkDirty = false;
     for (var cjr = 0; cjr < CARS_N; cjr++) {
-      while (cars[cjr].z < game.z - 130) { cars[cjr].z += WORLD_LEN; carMatrix(cjr); junkDirty = true; }
+      while (cars[cjr].z < game.z - 130) {
+        cars[cjr].z += WORLD_LEN;
+        /* WAVE 29 JUNK KEEP-CLEAR (closes punch 31e with the w26 corn pattern):
+           the crossing recycles +6400 (and _hold staging relocates it at will)
+           while junk strides +2400, so the w25 boot nudge only ever guarded the
+           first site (z == XING_Z0 mod 2400) — on later laps a dead car could
+           park right beside the rails/panels (lat 15-19 reads "in the road" at
+           night just past the crossing). One compare against the crossing's
+           CURRENT z in this same pass, allocation-free; carMatrix recomposes at
+           the new z, so the stored off-lane latitude is preserved. */
+        if (cars[cjr].z - xingZ > -30 && cars[cjr].z - xingZ < 30) cars[cjr].z = xingZ + 35;
+        carMatrix(cjr); junkDirty = true;
+      }
     }
     for (var bjr = 0; bjr < BALE_N; bjr++) {
-      while (bales[bjr].z < game.z - 130) { bales[bjr].z += WORLD_LEN; baleMatrix(bjr); junkDirty = true; }
+      while (bales[bjr].z < game.z - 130) {
+        bales[bjr].z += WORLD_LEN;
+        if (bales[bjr].z - xingZ > -30 && bales[bjr].z - xingZ < 30) bales[bjr].z = xingZ + 35;
+        baleMatrix(bjr); junkDirty = true;
+      }
     }
     if (junkDirty) {
       carBodyMesh.instanceMatrix.needsUpdate = true;

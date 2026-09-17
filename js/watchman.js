@@ -63,8 +63,9 @@
   var grp = null, model = null, skinned = null;
   var pip = null, halo = null;
 
-  /* pace machine: IDLE at post / PACE (walk legs + turns) / HOME (walk to post) */
-  var mode = 'idle';           /* idle | pace | home */
+  /* pace machine: IDLE at post / PACE (walk legs + turns) / PACEOUT (finish the
+     current leg after a release, then idle) / HOME (walk to post) */
+  var mode = 'idle';           /* idle | pace | paceOut | home */
   var phase = 'leg';           /* leg | turn */
   var legDir = -1;             /* -1 walking toward PACE_LO, +1 toward PACE_HI */
   var turnT = 0, turnFrom = 0, turnTo = 0;
@@ -256,7 +257,7 @@
         turnFrom = walkYaw(legDir);
         turnTo = walkYaw(next);
         legDir = next;
-      } else {
+      } else {                                       /* paceOut: released — stop here */
         arriveStop();
       }
     }
@@ -306,9 +307,9 @@
       stopT += dt;
       startPacing();
     } else if (mode === 'pace') {
-      /* release: keep walking the current leg — tickPace lands arriveStop at the end */
-    } else if (mode === 'home') {
-      /* keep walking home */
+      /* release: finish the current leg to its natural stop point (tickPace lands
+         arriveStop at the leg end), then idle */
+      mode = 'paceOut';
     }
     if (mode !== 'idle') tickPace(dt);
 
