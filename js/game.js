@@ -3816,6 +3816,7 @@
       updateSkyFX(now, dt, game.z);
       updateSparks(dt);
       updateTraffic(dt);   /* WAVE 18 ONCOMING: pooled westbound traffic — ride/overcrank only, never the title */
+      updateTrainXing(dt);   /* WAVE 25 HOG CROSSING: rail crossing set + scheduler + train — ride/overcrank only */
     }
     renderFrame();
   }
@@ -4409,6 +4410,490 @@
       var hold = quest.active && quest.state === 'tow' && quest.destPos - game.z < 460;
       return { live: trafLive, n: trafCars.length, hold: hold, buffet: +buffetT.toFixed(2),
                touch: IS_TOUCH, px: +game.x.toFixed(2), pz: +game.z.toFixed(2), cars: cars };
+    }
+  };
+
+  /* ---------------- WAVE 25: HOG CROSSING — the night freight ----------------
+     Occasionally the highway crosses a freight rail line, and sometimes you
+     catch a train going through: crossbucks blinking red, striped gates
+     swinging down, a long line of lit/stenciled cars rolling across your
+     headlights. THE SPECTACLE of the ride. One hard invariant above everything:
+     THE TRAIN NEVER INTERSECTS THE PLAYER.
+
+     SCHEDULER (the heart) — w11 weather-clock pattern: first attempt 35-55s
+     into a ride, then every 90-150s, ~65% roll per cycle; ride/overcrank ONLY
+     (this update is not even called on the title — the title never fires).
+     Any skip reschedules SHORT (6-11s) so the hunt keeps polling while the
+     crossing sits in the fire window. Guards: the w18 quest-destination hold
+     pattern (dest within 500u), an active-event mutex, and the fire window.
+
+     INVARIANT MATH (exposed through window.HogTrain.state()):
+       WORST    78 u/s — faster than the bike can EVER go. True ceiling:
+                maxSpeed 52 * crank.boostF, boostF max 1.45 (perfect chain)
+                = 75.4. 78 pads above it, so even a boosted rider can never
+                beat the margin; braking/grass/overcrank only add slack.
+       eta      dist / WORST                       (earliest player arrival, s)
+       clearT   (startPad + 12 + 12 + 8 + L) / spd (fire -> tail clears the far
+                road edge +8; startPad = 120 + rand(24,60) — the nose starts
+                just beyond the 120u gate-activation distance)
+       FIRE RULE: dist >= clearT*WORST + 60 — when the tail clears, the
+                earliest rider still has 60u of travel left. state().clearBy =
+                (eta - clearT)*WORST, re-derived EVERY frame from the true
+                train position; it can only grow for slower riding.
+       window   [clearT*WORST + 60, 1500] — too close/fast = no show this
+                window (the rider "simply doesn't get the event"); too far =
+                keep waiting.
+     Frame-math consequences the rig asserts live: gates reach full-down only
+     while dist >= 60 (worst case), so when the rider is within 30u the arms
+     have been rising >= 60u/78 = 0.77s and sit <= 0.45 — never fully down near
+     the rider; and the rider crosses the rails >= 60u after the tail cleared,
+     with car-center clearance bounded far above 4u.
+
+     SET GEOMETRY: pooled, built once, recycled like the landmarks (6400
+     stride, the `while z < game.z - 130` idiom in its OWN loop — no w8 edits).
+     Beat z 4480: tower 3860 -> 620u clear, drive-in 5170 -> 690u clear,
+     billboards at 4260/4900 -> 220u+, poles at 4440/4500 clear the rail
+     corridor in z. The w7 instanced junk is random per load, so anything
+     inside the rail corridor is nudged off it ONCE at boot (a junk car parked
+     on the rails would break the read; refreshed via their own matrix
+     writers). The whole set rides one group tilted atan(roadSlope(z)) so the
+     rails run perpendicular to the road on curves. Rails sit ON the ground:
+     side ballast strips, tie strip, two rail boxes + worn railhead lines, and
+     darker gravel panels ON the tarmac (y 0..0.23 over the y=0 road plane —
+     nothing floats). Masts sit at z -2.9/+2.9, clear of the train envelope
+     (half-width 1.6) — the near arm blocks the rider's lane ~3u BEFORE the
+     rails, exactly like a real grade crossing. Crossbucks: retro-reflective
+     pale X (MeshBasic night-dim ~0.5 lum — w14 sign doctrine, sub-bloom) + a
+     red lamp pair per post that blink ALTERNATELY while active — lamp boxes
+     dim, and the additive halos are FOG:FALSE (w9 beacon precedent: flashing
+     crossing lights carry for miles at night) at sub-bloom ~0.55 alpha so the
+     alternating red reads at 200u+ even mid-fog. Gate arms: striped
+     canvas arms on a pivot at y 4.35, stowed leaning ~6 deg back off-vertical,
+     swinging 1.85 rad (~106 deg) to hang ~10 deg below horizontal — tips reach
+     the centerline — over 1.2s down, 1.4s up after the tail clears.
+
+     TRAIN: one pooled group (child of the crossing set), nose at local +x,
+     translated along the rail axis each frame. Locomotive: warm-lit cab band,
+     fog:false glare sprite + swept ground pool (w18/w5 doctrine — the light
+     emerges from the fog before the body). N freight cars (12 desktop / 7
+     touch) at a 15u pitch, ~29-36 u/s: boxcar silhouettes at 0x0e-0x16 night
+     albedo (stenciled sides ship too dark to read at night — that's correct),
+     sparse warm door slits (lum ~0.67, sub-bloom), two tank cars, a caboose
+     with a dim red marker. Disposal when the tail is 40u past the road edge:
+     visible=false, parked off-world, pooled kid count constant. Zero per-frame
+     allocation — every write is a number on a cached handle.
+
+     Touch tier: same event, shorter train, same invariant math. NO bell/audio
+     — w21 owns audio; this event is visual only, zero new listeners. */
+  var XING_Z0 = 4480, XING_SPAN = LANDMARK_SPAN;
+  var TRAIN_WORST25 = 78, MARGIN25 = 60, ROAD_HALF25 = 12, CLEAR_BUF25 = 8, DISPOSE25 = 40;
+  var XING_N = IS_TOUCH ? 7 : 12;
+  var L25 = 16.8 + 15 * XING_N;                      /* loco + N cars at a 15u pitch */
+  var xingZ = XING_Z0, clk25 = 0;
+  var xingX25 = 0, cosC25 = 1, sinC25 = 0;
+  var carX25 = [];                                   /* pooled car centers (rail-local x), probe handle */
+  var trainSched = { timer: rand(35, 55), fired: 0, skipped: 0 };
+  var tr25 = { active: false, t: 0, dir: 1, spd: 32, startPad: 140, liveMargin: 1e9, shows: 0 };
+  var armed25 = false, cleared25 = false, gateT25 = 0, lastBlink25 = -1, exitOff25 = -1e9;
+  var lastFire25 = { clearTime: 0, eta: 0, clearBy: 0, minDist: 0, dist: 0, spd: 0, startPad: 0 };
+
+  var xingG = new THREE.Group();
+  xingG.name = 'xing25';
+  var trainG = new THREE.Group();
+  trainG.name = 'train25';
+  xingG.add(trainG);
+
+  /* keep-clear: nudge w7 instanced junk off the rail corridor (their own matrix
+     writers, one-time at boot — nothing else in that system is touched) */
+  (function () {
+    var i, zc, dirtyC = false, dirtyB = false;
+    for (i = 0; i < cars.length; i++) {
+      zc = ((cars[i].z - XING_Z0) % WORLD_LEN + WORLD_LEN) % WORLD_LEN;
+      if (zc < 8 || zc > WORLD_LEN - 8) { cars[i].z += 16; carMatrix(i); dirtyC = true; }
+    }
+    for (i = 0; i < bales.length; i++) {
+      zc = ((bales[i].z - XING_Z0) % WORLD_LEN + WORLD_LEN) % WORLD_LEN;
+      if (zc < 8 || zc > WORLD_LEN - 8) { bales[i].z += 16; baleMatrix(i); dirtyB = true; }
+    }
+    if (dirtyC) { carBodyMesh.instanceMatrix.needsUpdate = true; carCabMesh.instanceMatrix.needsUpdate = true; }
+    if (dirtyB) baleMesh.instanceMatrix.needsUpdate = true;
+  })();
+
+  (function buildXing() {
+    var ballastMat = new THREE.MeshLambertMaterial({ color: 0x15130d });
+    var tieMat = new THREE.MeshLambertMaterial({ color: 0x100c08 });
+    var railMat = new THREE.MeshLambertMaterial({ color: 0x333840 });
+    var headMat = new THREE.MeshBasicMaterial({ color: 0x3a4046 });    /* worn railhead sheen, sub-bloom */
+    var panelMat = new THREE.MeshLambertMaterial({ color: 0x111014 }); /* gravel crossing panel: darker strip on the tarmac */
+    var timberMat = new THREE.MeshLambertMaterial({ color: 0x1c1713 });
+    var steelMat = new THREE.MeshLambertMaterial({ color: 0x2a2724 });
+    var xbMat = new THREE.MeshBasicMaterial({ color: 0x9aa0a8 });      /* retro-reflective pale X, night-dim sub-bloom (tuned UP from 0x82878d: deterministic probe read X-vs-field +0.045 calm @260u — a warning sign must read in every phase; this holds +0.06+) */
+    var lampBarMat = new THREE.MeshLambertMaterial({ color: 0x191613 });
+    var m;
+    /* ballast each side of the road (the tarmac carries its own darker panels) */
+    m = new THREE.Mesh(new THREE.BoxGeometry(132.8, 0.1, 4.4), ballastMat);
+    m.position.set(-78.8, -0.01, 0); xingG.add(m);
+    m = new THREE.Mesh(new THREE.BoxGeometry(132.8, 0.1, 4.4), ballastMat);
+    m.position.set(78.8, -0.01, 0); xingG.add(m);
+    /* tie strip runs the full line, over ballast and tarmac panel alike */
+    m = new THREE.Mesh(new THREE.BoxGeometry(289, 0.09, 2.7), tieMat);
+    m.position.set(0, 0.055, 0); xingG.add(m);
+    /* rail pair + worn railhead lines */
+    for (var rz = -1; rz <= 1; rz += 2) {
+      m = new THREE.Mesh(new THREE.BoxGeometry(289, 0.12, 0.14), railMat);
+      m.position.set(0, 0.155, rz * 0.72); xingG.add(m);
+      m = new THREE.Mesh(new THREE.BoxGeometry(289, 0.02, 0.05), headMat);
+      m.position.set(0, 0.225, rz * 0.72); xingG.add(m);
+    }
+    /* gravel crossing panel ON the road + weathered timber flanking */
+    m = new THREE.Mesh(new THREE.BoxGeometry(24.8, 0.045, 5.6), panelMat);
+    m.position.set(0, 0.0225, 0); xingG.add(m);
+    for (var tz = -1; tz <= 1; tz += 2) {
+      m = new THREE.Mesh(new THREE.BoxGeometry(24.8, 0.07, 0.6), timberMat);
+      m.position.set(0, 0.035, tz * 2.85); xingG.add(m);
+    }
+    /* striped gate-arm canvas: alternating night-dim white/red bands, Basic =
+       retro-reflective (reads under your headlight, never blooms) */
+    var armCv = makeCanvas(64, 512), armG = armCv.getContext('2d');
+    for (var bk = 0; bk < 12; bk++) {
+      armG.fillStyle = bk % 2 === 0 ? '#a8ada6' : '#7d1a12';
+      armG.fillRect(0, Math.floor(bk * 512 / 12), 64, Math.ceil(512 / 12) + 1);
+    }
+    var armMat = new THREE.MeshBasicMaterial({ map: srgb(new THREE.CanvasTexture(armCv)) });
+    var armGeo = new THREE.BoxGeometry(0.18, 14.5, 0.24);
+    /* gate + crossbuck mast, one per road side. EAST is built FIRST: its lamp
+       materials are the shared pair the west mast reuses, so one blink write
+       drives all four lamps. Near (east) mast sits at z -2.9 — between the
+       rider and the rails; far (west) mast mirrors at z +2.9. */
+    for (var side = 1; side >= -1; side -= 2) {
+      var px = side * 13.5, pz = side * 2.9;
+      var post = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 5.4, 7), steelMat);
+      post.position.set(px, 2.64, pz);
+      xingG.add(post);
+      /* crossbuck X, slightly proud of the approach face (-z) */
+      for (var xs = -1; xs <= 1; xs += 2) {
+        var slat = new THREE.Mesh(new THREE.BoxGeometry(0.30, 2.3, 0.08), xbMat);
+        slat.position.set(px, 4.95, pz - 0.08);
+        slat.rotation.z = xs * 0.72;
+        xingG.add(slat);
+      }
+      /* red lamp pair (blink alternately while active) + halos that carry the
+         read past 200u; lamp boxes stay dim, the halo owns the glow */
+      var bar = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.30, 0.12), lampBarMat);
+      bar.position.set(px, 3.4, pz - 0.08);
+      xingG.add(bar);
+      for (var ls = -1; ls <= 1; ls += 2) {
+        var lampMat, haloMat;
+        if (side > 0) {
+          lampMat = new THREE.MeshBasicMaterial({ color: 0x050101 });
+          haloMat = new THREE.SpriteMaterial({
+            map: V.softDotTexture ? V.softDotTexture() : null,
+            transparent: true, opacity: 0, depthWrite: false, fog: false,
+            blending: THREE.AdditiveBlending
+          });
+          if (ls < 0) { xingG.userData.lampAMat = lampMat; xingG.userData.haloAMat = haloMat; }
+          else { xingG.userData.lampBMat = lampMat; xingG.userData.haloBMat = haloMat; }
+        } else {
+          lampMat = ls < 0 ? xingG.userData.lampAMat : xingG.userData.lampBMat;
+          haloMat = ls < 0 ? xingG.userData.haloAMat : xingG.userData.haloBMat;
+        }
+        var lamp = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), lampMat);
+        lamp.position.set(px + ls * 0.22, 3.4, pz - 0.17);
+        if (side > 0) lamp.name = ls < 0 ? 'lampA25' : 'lampB25';
+        xingG.add(lamp);
+        var halo = new THREE.Sprite(haloMat);
+        halo.scale.set(2.3, 2.3, 1);
+        halo.position.set(px + ls * 0.22, 3.4, pz - 0.24);
+        xingG.add(halo);
+      }
+      /* gate: mechanism box + striped arm on a pivot (stowed leaning back) */
+      var mech = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6, 0.42), steelMat);
+      mech.position.set(px, 4.35, pz + 0.05);
+      xingG.add(mech);
+      var pivot = new THREE.Group();
+      pivot.name = side > 0 ? 'gateE25' : 'gateW25';
+      pivot.position.set(px, 4.35, pz + 0.05);
+      var arm = new THREE.Mesh(armGeo, armMat);
+      arm.position.y = 7.25;                          /* arm extends up from the pivot */
+      pivot.add(arm);
+      xingG.add(pivot);
+      if (side > 0) xingG.userData.gateE = pivot; else xingG.userData.gateW = pivot;
+    }
+    /* equipment cabinet at the east post base — roadside Americana */
+    m = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.3, 0.8), steelMat);
+    m.position.set(14.4, 0.59, -2.3);
+    xingG.add(m);
+  })();
+
+  (function buildTrain() {
+    var paints = [0x101418, 0x140f0b, 0x0e120e, 0x160f12, 0x12100a];
+    var bogieGeo = new THREE.BoxGeometry(2.4, 0.5, 2.5);
+    var bogieMat = new THREE.MeshLambertMaterial({ color: 0x0a0908 });
+    var c, i, bx;
+    /* --- locomotive: nose at local +L25, warm-lit cab, w18 glare doctrine --- */
+    var locoC = L25 - 8.4;
+    c = new THREE.Mesh(new THREE.BoxGeometry(16.8, 3.2, 3.15), new THREE.MeshLambertMaterial({ color: 0x131519 }));
+    c.position.set(locoC, 1.95, 0); trainG.add(c);
+    c = new THREE.Mesh(new THREE.BoxGeometry(3.1, 2.0, 3.3), new THREE.MeshLambertMaterial({ color: 0x131519 }));
+    c.position.set(locoC - 5.8, 4.35, 0); trainG.add(c);
+    c = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.6, 3.36), new THREE.MeshBasicMaterial({ color: 0xffa145 }));
+    c.material.color.setRGB(1.0, 0.63, 0.27);          /* lit cab band, lum ~0.67 sub-bloom */
+    c.position.set(locoC - 5.8, 4.72, 0); trainG.add(c);
+    c = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6, 0.3), new THREE.MeshBasicMaterial({ color: 0x4a4436 }));
+    c.position.set(L25 - 0.2, 3.1, 0); trainG.add(c);  /* lamp box dim — the sprite owns the glare */
+    var glare25 = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: V.softDotTexture ? V.softDotTexture() : null,
+      transparent: true, opacity: 0.85, depthWrite: false, fog: false,   /* emerges from the fog FIRST */
+      blending: THREE.AdditiveBlending
+    }));
+    glare25.material.color.setRGB(1.85, 1.62, 1.22);
+    glare25.scale.set(2.6, 2.6, 1);
+    glare25.position.set(L25 + 0.5, 3.1, 0);
+    glare25.name = 'glare25';
+    trainG.add(glare25);
+    var poolCv = makeCanvas(256, 256), poolG = poolCv.getContext('2d');
+    var grd25 = poolG.createRadialGradient(128, 128, 6, 128, 128, 122);
+    grd25.addColorStop(0.00, 'rgba(255,214,156,0.50)');
+    grd25.addColorStop(0.40, 'rgba(255,204,140,0.20)');
+    grd25.addColorStop(1.00, 'rgba(255,198,132,0)');
+    poolG.fillStyle = grd25;
+    poolG.fillRect(0, 0, 256, 256);
+    var pool25 = new THREE.Mesh(new THREE.PlaneGeometry(9, 26), new THREE.MeshBasicMaterial({
+      map: srgb(new THREE.CanvasTexture(poolCv)), transparent: true, opacity: 0.3, fog: false,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    }));
+    pool25.rotation.x = -Math.PI / 2;
+    pool25.position.set(L25 + 13, 0.07, 0);
+    pool25.renderOrder = 4;
+    trainG.add(pool25);
+    for (bx = -1; bx <= 1; bx += 2) {
+      c = new THREE.Mesh(bogieGeo, bogieMat);
+      c.position.set(locoC + bx * 5.0, 0.5, 0); trainG.add(c);
+    }
+    /* --- freight cars --- */
+    var tankGeo = new THREE.CylinderGeometry(1.35, 1.35, 11.5, 14);
+    tankGeo.rotateZ(Math.PI / 2);
+    var slitMat = new THREE.MeshBasicMaterial({ color: 0xff9942 });
+    slitMat.color.setRGB(1.0, 0.60, 0.26);             /* warm door slits, sub-bloom */
+    for (i = 0; i < XING_N; i++) {
+      var cx = L25 - 25.05 - 15 * i;
+      carX25.push(cx);
+      var isTank = (i === 3 || i === 8) && i < XING_N - 1;
+      var isCaboose = i === XING_N - 1;
+      if (isTank) {
+        c = new THREE.Mesh(tankGeo, new THREE.MeshLambertMaterial({ color: 0x171a1e }));
+        c.position.set(cx, 2.0, 0); trainG.add(c);
+        c = new THREE.Mesh(new THREE.BoxGeometry(12.0, 0.5, 2.3), new THREE.MeshLambertMaterial({ color: 0x0e1013 }));
+        c.position.set(cx, 0.55, 0); trainG.add(c);
+        for (bx = -1; bx <= 1; bx += 2) {
+          c = new THREE.Mesh(bogieGeo, bogieMat);
+          c.position.set(cx + bx * 3.6, 0.5, 0); trainG.add(c);
+        }
+      } else if (isCaboose) {
+        c = new THREE.Mesh(new THREE.BoxGeometry(10.5, 3.0, 2.9), new THREE.MeshLambertMaterial({ color: 0x180e0b }));
+        c.position.set(cx, 1.7, 0); trainG.add(c);
+        c = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.15, 2.5), new THREE.MeshLambertMaterial({ color: 0x140b09 }));
+        c.position.set(cx + 1.0, 3.75, 0); trainG.add(c);
+        c = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.34, 0.14), new THREE.MeshBasicMaterial({ color: 0xe0180f }));
+        c.material.color.setRGB(1.0, 0.12, 0.10);      /* dim red marker, sub-bloom */
+        c.position.set(cx - 5.32, 2.5, 0); trainG.add(c);
+        for (bx = -1; bx <= 1; bx += 2) {
+          c = new THREE.Mesh(bogieGeo, bogieMat);
+          c.position.set(cx + bx * 3.2, 0.5, 0); trainG.add(c);
+        }
+      } else {
+        c = new THREE.Mesh(new THREE.BoxGeometry(13.5, 3.1, 2.8), new THREE.MeshLambertMaterial({ color: paints[i % paints.length] }));
+        c.position.set(cx, 1.75, 0); trainG.add(c);
+        if (i % 3 === 1) {                              /* sparse lit door gaps */
+          c = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.7, 2.86), slitMat);
+          c.position.set(cx + 2.5, 1.55, 0); trainG.add(c);
+        }
+        for (bx = -1; bx <= 1; bx += 2) {
+          c = new THREE.Mesh(bogieGeo, bogieMat);
+          c.position.set(cx + bx * 4.2, 0.5, 0); trainG.add(c);
+        }
+      }
+    }
+    trainG.visible = false;
+    trainG.position.x = -4000;
+  })();
+  scene.add(xingG);
+
+  function placeXing() {
+    xingG.position.set(roadX(xingZ), 0, xingZ);
+    var sl = roadSlope(xingZ);                          /* rails perpendicular to the road, even on curves */
+    xingG.rotation.y = Math.atan(sl);
+    xingX25 = roadX(xingZ);
+    cosC25 = Math.cos(Math.atan(sl));
+    sinC25 = Math.sin(Math.atan(sl));
+  }
+  placeXing();
+
+  function setBlink25(state) {                          /* 0 off, 1 lampA, 2 lampB */
+    if (state === lastBlink25) return;
+    lastBlink25 = state;
+    var aOn = state === 1, bOn = state === 2;
+    xingG.userData.lampAMat.color.setRGB(aOn ? 1.2 : 0.05, aOn ? 0.16 : 0.012, aOn ? 0.13 : 0.01);
+    xingG.userData.haloAMat.opacity = aOn ? 0.55 : 0;
+    xingG.userData.lampBMat.color.setRGB(bOn ? 1.2 : 0.05, bOn ? 0.16 : 0.012, bOn ? 0.13 : 0.01);
+    xingG.userData.haloBMat.opacity = bOn ? 0.55 : 0;
+  }
+
+  function endEvent25() {
+    tr25.active = false;
+    tr25.shows++;
+    trainG.visible = false;
+    trainG.position.x = -4000;
+    armed25 = false;
+    cleared25 = false;
+    exitOff25 = -1e9;
+    tr25.liveMargin = 1e9;
+    setBlink25(0);
+  }
+
+  function attemptFire25(distForce, opts) {
+    var result = { fired: false, reason: '', dist: 0, eta: 0, clearTime: 0, clearBy: 0, minDist: 0, spd: 0, startPad: 0, crossZ: 0, gz: 0 };
+    if (mode !== 'ride' && mode !== 'overcrank') { result.reason = 'title'; return result; }
+    if (tr25.active) { result.reason = 'active'; return result; }
+    if (distForce !== undefined && distForce !== null) { /* rig handle: place the crossing exactly there */
+      xingZ = game.z + distForce;
+      placeXing();
+    }
+    if (xingZ < game.z - 130) xingZ += XING_SPAN;
+    var dist = xingZ - game.z;
+    var spd = opts && opts.spd ? opts.spd : rand(29, 36);
+    var startPad = opts && opts.startPad ? opts.startPad : 120 + rand(24, 60);
+    var clearT = (startPad + ROAD_HALF25 + ROAD_HALF25 + CLEAR_BUF25 + L25) / spd;
+    var eta = dist / TRAIN_WORST25;
+    var clearBy = (eta - clearT) * TRAIN_WORST25;
+    var minDist = clearT * TRAIN_WORST25 + MARGIN25;
+    result.dist = +dist.toFixed(1); result.eta = +eta.toFixed(3); result.clearTime = +clearT.toFixed(3);
+    result.clearBy = +clearBy.toFixed(2); result.minDist = +minDist.toFixed(1);
+    result.spd = +spd.toFixed(2); result.startPad = +startPad.toFixed(1);
+    result.crossZ = +xingZ.toFixed(1); result.gz = +game.z.toFixed(1);
+    lastFire25 = { clearTime: clearT, eta: eta, clearBy: clearBy, minDist: minDist, dist: dist, spd: spd, startPad: startPad };
+    /* the w18 quest-destination hold, same pattern at 500u */
+    if (quest.active && quest.state === 'tow' && quest.destPos - game.z < 500) { result.reason = 'quest'; return result; }
+    if (dist < minDist) { result.reason = 'too-close'; return result; }  /* rider too close/fast for a clean show */
+    if (dist > 1500) { result.reason = 'window'; return result; }
+    tr25.active = true;
+    tr25.t = 0;
+    tr25.dir = Math.random() < 0.5 ? 1 : -1;
+    tr25.spd = spd;
+    tr25.startPad = startPad;
+    tr25.liveMargin = clearBy - MARGIN25;
+    armed25 = false;
+    cleared25 = false;
+    gateT25 = 0;
+    exitOff25 = -startPad - L25 - ROAD_HALF25;
+    trainG.visible = true;
+    trainG.rotation.y = tr25.dir < 0 ? Math.PI : 0;     /* nose faces the travel direction */
+    trainG.position.x = -tr25.dir * (startPad + L25);   /* nose starts at -dir*startPad */
+    trainSched.fired++;
+    result.fired = true;
+    return result;
+  }
+
+  function updateTrainXing(dt) {
+    clk25 += dt;
+    /* recycle the set on the landmark stride, its own loop */
+    if (xingZ < game.z - 130) { xingZ += XING_SPAN; placeXing(); }
+
+    /* ---- scheduler: ride/overcrank only (this update is never called on title) ---- */
+    if (!tr25.active) {
+      trainSched.timer -= dt;
+      if (trainSched.timer <= 0) {
+        if (Math.random() < 0.65) {
+          var fr = attemptFire25(null, null);
+          trainSched.timer = fr.fired ? rand(90, 150) : rand(6, 11);   /* skips reschedule SHORT */
+          if (!fr.fired) trainSched.skipped++;
+        } else {
+          trainSched.skipped++;
+          trainSched.timer = rand(90, 150);
+        }
+      }
+    }
+
+    /* ---- live train ---- */
+    if (tr25.active) {
+      tr25.t += dt;
+      var nose = tr25.dir * (tr25.spd * tr25.t - tr25.startPad);
+      exitOff25 = tr25.dir * nose - L25 - ROAD_HALF25;  /* how far the TAIL is past the far road edge */
+      trainG.position.x = nose - tr25.dir * L25;
+      /* LIVE invariant telemetry: player-travel slack when the tail clears */
+      var remClear = exitOff25 >= CLEAR_BUF25 ? 0 : (CLEAR_BUF25 - exitOff25) / tr25.spd;
+      tr25.liveMargin = (xingZ - game.z) - remClear * TRAIN_WORST25 - MARGIN25;
+      if (!armed25 && Math.abs(nose) <= 120) armed25 = true;             /* gates + crossbucks go live */
+      if (!cleared25 && exitOff25 >= CLEAR_BUF25) cleared25 = true;      /* tail clear: blink off, gates rise */
+      if (exitOff25 >= DISPOSE25) endEvent25();                          /* tail 40u past the road: dispose, pooled */
+    }
+
+    /* ---- gate + crossbuck visuals (eased even through disposal) ---- */
+    if (armed25 && !cleared25) gateT25 = Math.min(1, gateT25 + dt / 1.2);
+    else if (gateT25 > 0) gateT25 = Math.max(0, gateT25 - dt / 1.4);
+    var gs25 = gateT25 * gateT25 * (3 - 2 * gateT25);
+    xingG.userData.gateE.rotation.z = -0.10 + gs25 * 1.85;
+    xingG.userData.gateW.rotation.z = 0.10 - gs25 * 1.85;
+    if (armed25 && !cleared25) {
+      setBlink25(((clk25 * 1.15) % 1) < 0.5 ? 1 : 2);   /* alternating red, ~0.87s cycle */
+    } else if (lastBlink25 !== 0) setBlink25(0);
+  }
+
+  /* rig + judge handle: force-fire at a staged distance (opts pins spd/startPad
+     so the worst-case boundary is deterministic); refuses if the invariant
+     can't hold — the refusal IS the invariant working.
+     _stage(gate01, blinkOn): rig-only staged-visuals handle — poses the
+     crossing's own gate + crossbuck state WITHOUT a live train (composition
+     stills). Drives the same armed/cleared visuals the live event uses. */
+  window.HogTrain = {
+    _stage: function (gate01, blinkOn) {
+      armed25 = true;
+      cleared25 = false;
+      gateT25 = clamp(gate01, 0, 1);
+      setBlink25(blinkOn ? (((clk25 * 1.15) % 1) < 0.5 ? 1 : 2) : 0);
+      return { gate: +gateT25.toFixed(3), blink: lastBlink25, staged: true };
+    },
+    _fire: function (distAhead, opts) {
+      return attemptFire25(distAhead, opts);
+    },
+    state: function () {
+      var carsW = [];
+      var i, nose = tr25.active ? tr25.dir * (tr25.spd * tr25.t - tr25.startPad) : -1e9;
+      for (i = 0; i < carX25.length; i++) {
+        /* w25 judge: the group is rotated PI for dir<0 (L4790), so the authoritative
+           world offset is dir * localX — the naive +localX mirrored half of all events */
+        var lx25 = trainG.position.x + tr25.dir * carX25[i];
+        carsW.push({
+          x: +(xingX25 + cosC25 * lx25).toFixed(2),
+          z: +(xingZ - sinC25 * lx25).toFixed(2)
+        });
+      }
+      var eta = (xingZ - game.z) / TRAIN_WORST25;
+      /* clearBy lives with the true train position: player-travel slack when
+         the tail clears (= liveMargin + 60 while active; dist once cleared) */
+      var remC = 0;
+      if (tr25.active && exitOff25 < CLEAR_BUF25) remC = (CLEAR_BUF25 - exitOff25) / tr25.spd;
+      return {
+        active: tr25.active,
+        trainZ: +(tr25.active ? nose : 0).toFixed(2),
+        crossZ: +xingZ.toFixed(1),
+        gate: +gateT25.toFixed(3),
+        blink: lastBlink25,
+        cars: XING_N,
+        len: +L25.toFixed(1),
+        eta: +eta.toFixed(3),
+        clearTime: +lastFire25.clearTime.toFixed(3),
+        clearBy: +(tr25.active ? (eta - remC) * TRAIN_WORST25 : Math.max(eta, 0)).toFixed(2),
+        liveMargin: +(tr25.active ? tr25.liveMargin : 1e9).toFixed(2),
+        minDist: +lastFire25.minDist.toFixed(1),
+        dir: tr25.dir, spd: +(tr25.active ? tr25.spd : 0).toFixed(2),
+        armed: armed25, cleared: cleared25, exitOff: +exitOff25.toFixed(2),
+        worstSpd: TRAIN_WORST25, margin: MARGIN25,
+        fired: trainSched.fired, skipped: trainSched.skipped, shows: tr25.shows,
+        kids: trainG.children.length, touch: IS_TOUCH,
+        px: +game.x.toFixed(2), pz: +game.z.toFixed(2),
+        carPos: carsW
+      };
     }
   };
 
