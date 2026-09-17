@@ -1440,6 +1440,310 @@
 
   landmarks.forEach(placeLandmark);
 
+  /* ---------------- WAVE 27 FAR LIGHTS: distant farmsteads ----------------
+     The mid-distance fields were a void — the fence/corn line ended and nothing
+     lived between it and the ridge. This layer fills 90-260u off the road with
+     DARK FARMSTEAD SILHOUETTES whose only emissives are warm windows, yard
+     lamps and far-carry halos: the silhouette-and-light doctrine, at depth.
+     Structure = one Lambert near-black merged mesh per farm (the barn/tower
+     "Lambert-dim so they read matte moonlit" precedent) that fog fades with
+     distance; windows/lamp heads ride UNDER the 0.72 bloom threshold; only the
+     halos are fog:false (tower-beacon doctrine — they carry the read past fog).
+     WINDMILLS tell the weather story: every rotor turns on the w20 gust clock
+     (driveFarms reads cornWindU.uGust — the exact scalar window.HogWind.state()
+     exposes — read-only, same coupling shape as fauna's pole read).
+     Placement/recycle = the landmark idiom: own array, own place function,
+     own `while (F.z < game.z - 130)` line on the 6400 LANDMARK_SPAN stride.
+     Draw calls: structure 1 + windows 1 (merged, vertex-colored) + at most one
+     halo sprite + one lamp head + one lamp pool + one rotor = 3-6 per farm.
+     Touch tier: 4 farms instead of 5, never more than 2 lit windows, halos
+     rarer. Zero new THREE lights, zero per-frame allocs. */
+  var FARM_SPAN = 6400;
+  var FARM_N = IS_TOUCH ? 4 : 5;
+  var farms = [], farmRotors = [];
+
+  var farmDark = new THREE.MeshLambertMaterial({ color: 0x0d0b09 });  /* moonlit-silhouette family */
+  var farmBlade = new THREE.MeshLambertMaterial({ color: 0x241e17 }); /* a hair more moon catch so the spin reads */
+  var farmWinMat = new THREE.MeshBasicMaterial({ vertexColors: true }); /* fog:true — windows fade INTO the dark like lit things should */
+  var farmHeadMat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+  farmHeadMat.color.setRGB(0.85, 0.5, 0.18);                          /* yard-lamp pip, sub-bloom, carries like the beacon dots */
+  var farmHaloMat = null, farmPoolMat = null;
+  if (V.softDotTexture) {
+    farmHaloMat = new THREE.SpriteMaterial({
+      map: V.softDotTexture(), transparent: true, opacity: 0.38,
+      depthWrite: false, blending: THREE.AdditiveBlending, fog: false  /* far carry, tower-beacon doctrine */
+    });
+    farmHaloMat.color.setRGB(0.42, 0.19, 0.05);                       /* warm sodium, well under the bloom line */
+  }
+  (function () {                                                      /* yard-lamp ground pool: w15 lamp-pool family */
+    var pc27 = makeCanvas(64, 64), pg27 = pc27.getContext('2d');
+    var rg27 = pg27.createRadialGradient(32, 32, 2, 32, 32, 32);
+    rg27.addColorStop(0, 'rgba(255,190,110,0.85)');
+    rg27.addColorStop(0.4, 'rgba(255,160,80,0.36)');
+    rg27.addColorStop(1, 'rgba(255,140,60,0)');
+    pg27.fillStyle = rg27;
+    pg27.fillRect(0, 0, 64, 64);
+    farmPoolMat = new THREE.MeshBasicMaterial({
+      map: srgb(new THREE.CanvasTexture(pc27)), transparent: true, opacity: 0.5,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide
+    });
+  })();
+
+  /* shared stock geometry (merged per farm at init — allocs here are build-time only) */
+  var farmBox27 = new THREE.BoxGeometry(1, 1, 1);
+  var farmGable27 = new THREE.CylinderGeometry(1, 1, 1, 3, 1);        /* triangular prism -> pitched-roof hint */
+  farmGable27.rotateX(-Math.PI / 2);                                  /* ridge along z, flat base at y=-0.5, apex y=+1 */
+  var farmSilo27 = new THREE.CylinderGeometry(1, 1, 1, 10);
+  var farmDome27 = new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+  var farmMast27 = new THREE.CylinderGeometry(0.14, 0.4, 1, 5);       /* tapered windmill mast */
+  var farmPlane27 = new THREE.PlaneGeometry(1, 1);
+
+  /* merge parts [{g, p:[x,y,z], s:[sx,sy,sz], rx, ry, rz}] (or bare geometries)
+     into ONE BufferGeometry — a whole farmstead structure draws in one call */
+  function mergeFarmGeo(parts) {
+    var pos = [], nor = [];
+    var m27 = new THREE.Matrix4(), q27 = new THREE.Quaternion(), e27 = new THREE.Euler();
+    var v27 = new THREE.Vector3(), s27 = new THREE.Vector3(), n27 = new THREE.Matrix3();
+    for (var i = 0; i < parts.length; i++) {
+      var P = parts[i], g = P.g || P;
+      e27.set(P.rx || 0, P.ry || 0, P.rz || 0);
+      q27.setFromEuler(e27);
+      v27.set(P.p ? P.p[0] : 0, P.p ? P.p[1] : 0, P.p ? P.p[2] : 0);
+      s27.set(P.s ? P.s[0] : 1, P.s ? P.s[1] : 1, P.s ? P.s[2] : 1);
+      m27.compose(v27, q27, s27);
+      n27.getNormalMatrix(m27);
+      var src = g.index ? g.toNonIndexed() : g;
+      var pa = src.attributes.position, na = src.attributes.normal;
+      for (var k = 0; k < pa.count; k++) {
+        v27.fromBufferAttribute(pa, k).applyMatrix4(m27);
+        pos.push(v27.x, v27.y, v27.z);
+        v27.fromBufferAttribute(na, k).applyMatrix3(n27).normalize();
+        nor.push(v27.x, v27.y, v27.z);
+      }
+      if (src !== g) src.dispose();
+    }
+    var out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+    out.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(nor), 3));
+    return out;
+  }
+
+  /* merged lit windows: planes baked with per-vertex ember/warm color, one mesh one call */
+  function mergeFarmWindows(wins) {
+    var pos = [], col = [];
+    var m27 = new THREE.Matrix4(), q27 = new THREE.Quaternion(), e27 = new THREE.Euler();
+    var v27 = new THREE.Vector3(), s27 = new THREE.Vector3();
+    for (var i = 0; i < wins.length; i++) {
+      var W = wins[i];
+      e27.set(0, W.ry !== undefined ? W.ry : Math.PI, 0);              /* default faces -z (the road side) */
+      q27.setFromEuler(e27);
+      v27.set(W.p[0], W.p[1], W.p[2]);
+      s27.set(W.w || 1, W.h || 1.1, 1);
+      m27.compose(v27, q27, s27);
+      var src = farmPlane27.toNonIndexed();
+      var pa = src.attributes.position;
+      for (var k = 0; k < pa.count; k++) {
+        v27.fromBufferAttribute(pa, k).applyMatrix4(m27);
+        pos.push(v27.x, v27.y, v27.z);
+        col.push(W.c[0], W.c[1], W.c[2]);
+      }
+      src.dispose();
+    }
+    var out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+    out.setAttribute('color', new THREE.BufferAttribute(new Float32Array(col), 3));
+    return out;
+  }
+
+  /* 4-blade rotor head: blades + hub baked into one geometry, spins about local z */
+  var farmRotor27 = (function () {
+    var parts = [new THREE.BoxGeometry(0.55, 0.55, 0.34)];             /* hub */
+    for (var k = 0; k < 4; k++) {
+      var b = new THREE.BoxGeometry(0.26, 2.75, 0.07);
+      b.translate(0, 1.5, 0);
+      if (k) b.rotateZ(k * Math.PI / 2);
+      parts.push(b);
+    }
+    return mergeFarmGeo(parts);
+  })();
+
+  var FARM_EMBER = [0.62, 0.24, 0.07], FARM_WARM = [0.64, 0.43, 0.15]; /* both ~0.3 linear — well under 0.72 */
+
+  function buildFarm(cfg) {
+    var grp = new THREE.Group(), parts = [], spots = [], myRotor = null;
+    var house27 = function (hx, hz, big) {                             /* low box + gable hint */
+      var W = big ? 9 : 7.5, D = big ? 6.5 : 5.6, H = big ? 5.2 : 4.4;
+      parts.push({ g: farmBox27, p: [hx, H / 2, hz], s: [W, H, D] });
+      var rw = W + 1.2, sy = rw / 1.732 * 0.62;
+      parts.push({ g: farmGable27, p: [hx, H + 0.5 * sy, hz], s: [rw / 1.732, sy, D + 0.8] }); /* base seats on the wall top */
+      return { x: hx, z: hz, d: D, top: H };
+    };
+    var barn27 = function (bx, bz) {                                   /* taller box, pitched roof */
+      var W = 13, D = 8.5, H = 7.5;
+      parts.push({ g: farmBox27, p: [bx, H / 2, bz], s: [W, H, D] });
+      var rw = W + 1.4, sy = rw / 1.732 * 0.66;
+      parts.push({ g: farmGable27, p: [bx, H + 0.5 * sy, bz], s: [rw / 1.732, sy, D + 1] });
+      return { x: bx, z: bz, d: D, top: H };
+    };
+    var silo27 = function (sx, sz) {                                   /* cylinder + dome cap */
+      parts.push({ g: farmSilo27, p: [sx, 5.25, sz], s: [1.9, 10.5, 1.9] });
+      parts.push({ g: farmDome27, p: [sx, 10.5, sz], s: [1.9, 1.55, 1.9] });
+    };
+    var mill27 = function (mx, mz) {                                   /* tapered mast + lattice hint, rotor head ~7u */
+      parts.push({ g: farmMast27, p: [mx, 3.7, mz], s: [1, 7.4, 1] });
+      parts.push({ g: farmBox27, p: [mx, 5.9, mz], s: [1.7, 0.14, 0.14], rz: 0.62 });
+      parts.push({ g: farmBox27, p: [mx, 5.9, mz], s: [1.7, 0.14, 0.14], rz: -0.62 });
+      myRotor = new THREE.Mesh(farmRotor27, farmBlade);
+      myRotor.position.set(mx, 7.55, mz);
+      myRotor.userData.f27 = 0.85 + Math.random() * 0.35;              /* per-mill drive factor, read by driveFarms */
+      grp.add(myRotor);
+      farmRotors.push(myRotor);
+    };
+    var lamp27 = function (lx, lz) {
+      parts.push({ g: farmBox27, p: [lx, 2.3, lz], s: [0.14, 4.6, 0.14] });
+      var head = new THREE.Mesh(farmBox27, farmHeadMat);
+      head.scale.set(0.26, 0.2, 0.26);
+      head.position.set(lx, 4.68, lz);
+      grp.add(head);
+      if (farmPoolMat) {
+        var pool = new THREE.Mesh(farmPlane27, farmPoolMat);
+        pool.rotation.x = -Math.PI / 2;
+        pool.scale.set(5.5, 5.5, 1);
+        pool.position.set(lx, 0.07, lz);
+        pool.renderOrder = 1;
+        grp.add(pool);
+      }
+    };
+    var face27 = function (b) { return b.z - b.d / 2 - 0.05; };        /* road-facing (-z) wall, a hair proud */
+    /* archetype combos: A farmhouse+silo+mill, B barn+farmhouse, C barn+silo+mill */
+    var a = cfg.arch;
+    if (a === 'A') {
+      var h = house27(-2, 0, true);
+      spots.push({ p: [h.x - 2.2, 3.1, face27(h)], w: 1, h: 1.25 });
+      spots.push({ p: [h.x + 2.1, 3.1, face27(h)], w: 1, h: 1.25 });
+      spots.push({ p: [h.x + 0.1, 3.2, face27(h)], w: 0.8, h: 1.05 });
+      silo27(5.6, 2.2);
+      if (cfg.mill) mill27(-8.6, 4.6);
+      if (cfg.lamp) lamp27(1.6, -5.2);
+    } else if (a === 'B') {
+      var b = barn27(3.4, 1.2);
+      spots.push({ p: [b.x - 3.4, 5.6, face27(b)], w: 0.75, h: 0.8 }); /* loft lamps */
+      spots.push({ p: [b.x + 1.6, 5.6, face27(b)], w: 0.75, h: 0.8 });
+      spots.push({ p: [b.x + 3.9, 2.2, face27(b)], w: 1.1, h: 1.4 });
+      var h2 = house27(-6.4, -0.6, false);
+      spots.push({ p: [h2.x - 1.4, 2.6, face27(h2)], w: 0.95, h: 1.2 });
+      if (cfg.mill) mill27(9.6, -4.4);
+      if (cfg.lamp) lamp27(-6.2, -4.6);
+    } else {
+      var b2 = barn27(-2.6, 0.4);
+      spots.push({ p: [b2.x - 3.6, 5.4, face27(b2)], w: 0.75, h: 0.8 });
+      spots.push({ p: [b2.x + 1.2, 5.4, face27(b2)], w: 0.75, h: 0.8 });
+      spots.push({ p: [b2.x + 3.4, 2.1, face27(b2)], w: 1.1, h: 1.4 });
+      silo27(6.4, -2.4);
+      if (cfg.mill) mill27(9.8, 3.8);
+      if (cfg.lamp) lamp27(4.2, -5.6);
+    }
+    var structure = new THREE.Mesh(mergeFarmGeo(parts), farmDark);
+    grp.add(structure);
+    /* light variety seeded at build: some farms go fully DARK (silhouette only) */
+    var nWin = cfg.dark ? 0 : Math.min(spots.length, cfg.maxWin);
+    var wpos = [];
+    if (nWin > 0) {
+      var picked = spots.slice();
+      for (var wi = picked.length - 1; wi > 0; wi--) {                 /* shuffle, keep nWin */
+        var wj = (Math.random() * (wi + 1)) | 0, wt = picked[wi];
+        picked[wi] = picked[wj]; picked[wj] = wt;
+      }
+      picked = picked.slice(0, nWin);
+      for (var wi2 = 0; wi2 < picked.length; wi2++) {
+        picked[wi2].c = Math.random() < 0.55 ? FARM_EMBER : FARM_WARM;
+        wpos.push({ x: picked[wi2].p[0], y: picked[wi2].p[1], z: picked[wi2].p[2] });
+      }
+      var winMesh = new THREE.Mesh(mergeFarmWindows(picked), farmWinMat);
+      grp.add(winMesh);
+      if (farmHaloMat && cfg.halo) {                                   /* at most ONE far-carry halo per farm */
+        var hw = picked[0];
+        var halo = new THREE.Sprite(farmHaloMat);
+        halo.scale.set(cfg.haloS, cfg.haloS, 1);
+        halo.position.set(hw.p[0], hw.p[1], hw.p[2] - 0.5);
+        grp.add(halo);
+      }
+    }
+    scene.add(grp);
+    return {
+      grp: grp, z: cfg.z, side: cfg.side, off: cfg.side * cfg.dist,
+      yaw: cfg.side * cfg.yawBase, lit: nWin, lamp: !!cfg.lamp, halo: !!(nWin > 0 && farmHaloMat && cfg.halo),
+      rotor: myRotor, winPos: wpos
+    };
+  }
+
+  function placeFarm(F) {
+    F.grp.position.set(roadX(F.z) + F.off, 0, F.z);
+    F.grp.rotation.y = F.yaw;
+  }
+
+  for (var fi27 = 0; fi27 < FARM_N; fi27++) {
+    var side27 = (fi27 % 2 === 0) ? -1 : 1;                            /* alternate sides down the span */
+    var roll27 = Math.random();
+    farms.push(buildFarm({
+      arch: roll27 < 0.4 ? 'A' : (roll27 < 0.75 ? 'B' : 'C'),
+      z: 620 + fi27 * (FARM_SPAN / FARM_N) + (fi27 === 0 ? rand(60, 140) : rand(-140, 140)),
+      side: side27,
+      dist: fi27 === 0 ? rand(95, 140) : rand(120, 255),               /* farm 0 stages near for light-read */
+      yawBase: rand(0.5, 0.9),                                         /* face the windows at the road (diner math) */
+      mill: fi27 % 2 === 1 || Math.random() < 0.45,                    /* light mix GUARANTEED, not sampled: mills >=2/span */
+      lamp: fi27 % 3 === 1 || Math.random() < 0.3,                     /* yard lamps >=2 on 5-farm spans (>=1 touch) */
+      dark: fi27 === 2 ? true : (FARM_N > 4 && fi27 === 3 && Math.random() < 0.15), /* farm 2 always silhouette-only; desktop may add ONE more (idx 3) */
+      maxWin: IS_TOUCH ? 2 : 3,
+      halo: !IS_TOUCH ? Math.random() < 0.45 : Math.random() < 0.22,
+      haloS: rand(2.6, 4.4)
+    }));
+    placeFarm(farms[fi27]);
+  }
+
+  /* rotor driver: every mill turns on the w20 gust clock — read-only, zero allocs.
+     Calm gust 0.10 -> ~0.62 rad/s; storm gust ~1.0 -> ~2.6 rad/s. The far layer
+     tells the weather story. Called from updateWeather's driver block + title. */
+  function driveFarms(dt) {
+    var sp27 = (0.4 + cornWindU.uGust.value * 2.2) * dt;
+    for (var i = 0; i < farmRotors.length; i++) {
+      farmRotors[i].rotation.z += sp27 * farmRotors[i].userData.f27;
+    }
+  }
+
+  /* rig/probe handle (same spirit as HogDrivein/HogWeather — observation only) */
+  var farmV27 = new THREE.Vector3();
+  window.HogFarms = {
+    state: function () {
+      return {
+        n: farms.length, span: FARM_SPAN, gust: +cornWindU.uGust.value.toFixed(3),
+        farms: farms.map(function (F) {
+          F.grp.getWorldPosition(farmV27);
+          return {
+            z: +F.z.toFixed(1), gx: +farmV27.x.toFixed(2), gz: +farmV27.z.toFixed(2),
+            side: F.side, off: +Math.abs(F.off).toFixed(1), yaw: +F.yaw.toFixed(2),
+            lit: F.lit, halo: F.halo ? 1 : 0, lamp: F.lamp, mill: F.rotor ? 1 : 0,
+            rotorDeg: F.rotor ? +F.rotor.rotation.z.toFixed(4) : null,
+            kids: F.grp.children.length,
+            wins: F.winPos.map(function (w) {
+              farmV27.set(w.x, w.y, w.z).applyMatrix4(F.grp.matrixWorld);
+              return { x: +farmV27.x.toFixed(2), y: +farmV27.y.toFixed(2), z: +farmV27.z.toFixed(2) };
+            })
+          };
+        })
+      };
+    },
+    visible: function (v) {                                            /* A/B rig handle: the layer off == HEAD scene */
+      for (var i = 0; i < farms.length; i++) farms[i].grp.visible = !!v;
+      return farms.length;
+    },
+    drawCalls: function () {                                          /* direct scene pass: a composer frame leaves info holding only the final quad */
+      renderer.info.reset();
+      renderer.render(scene, camera);
+      return renderer.info.render.calls;
+    }
+  };
+
   /* ---------------- bike factory ---------------- */
   /* WAVE 10 PACK ROSTER: shared mat/geo cache across player + NPC bikes (perf:
      one Lambert/Basic each per color family instead of per-mesh allocation). */
@@ -2472,6 +2776,7 @@
     driveCornWind(dt);   /* WAVE 20 THE WIND: gust scalar + bike tracker ride the same clock */
     driveSplashes(dt);   /* WAVE 22 RAIN LANDS: splash pips + rings ride the same clock */
     driveClouds(dt);     /* WAVE 23 STORM OVERHEAD: cloud deck opacity + drift + backlight */
+    driveFarms(dt);      /* WAVE 27 FAR LIGHTS: windmill rotors turn on the same w20 gust clock */
   }
 
   /* ---------------- WAVE 19 STORM SHINE: the storm leaves the road shining ----------------
@@ -3795,6 +4100,7 @@
       updateDust(dt);   /* WAVE 16: the rest-state exhaust puff lives and dies here (title has no other dust tick) */
       driveCornWind(dt);   /* WAVE 20 THE WIND: the title breeze — corn alive in the orbit (calm 0.10, storm if forced) */
       driveClouds(dt);     /* WAVE 23: deck eases even at title (calm 0 -> bands skip drawing) */
+      driveFarms(dt);      /* WAVE 27: far mill rotors turn even in the title orbit */
       if (!titleFlyby.update(dt)) {           /* WAVE 12: flyby drives the camera; orbit takes over on settle/skip */
         /* WAVE 12 judge fix: radius 9 put the orbit ON the lit apron (pale-slab frames);
            r15 keeps the camera off the pad with the glowing station behind the rider */
@@ -4019,6 +4325,10 @@
     for (var lm = 0; lm < landmarks.length; lm++) {
       var lmk = landmarks[lm];
       while (lmk.z < game.z - 130) { lmk.z += LANDMARK_SPAN; placeLandmark(lmk); }   /* WAVE 8: one lap every few minutes */
+    }
+    for (var fq27 = 0; fq27 < farms.length; fq27++) {
+      var fmk27 = farms[fq27];
+      while (fmk27.z < game.z - 130) { fmk27.z += FARM_SPAN; placeFarm(fmk27); }     /* WAVE 27: same stride as the landmarks */
     }
     gasStation.position.set(roadX(30), 0, 30); // stays home; world slides past it
 
