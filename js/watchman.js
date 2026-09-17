@@ -40,10 +40,12 @@
 
   /* ---- tuning constants (baked from in-game stills; see qa/w29-rig + art/w29) ---- */
   var SCALE = 0.92;            /* model is 1.99u tall -> 1.83u man beside the choppers */
-  var POST_X = 15.3;           /* east shoulder, local set frame: road edge 12, mast 13.5,
-                                  cabinet (14.4, z -2.3) — clear of rider lane (+6.8) and gates */
-  var POST_Z = -1.4;           /* between the rail line (|z|<0.8) and the cabinet (z<=-1.9) */
-  var PACE_LO = -11.5, PACE_HI = -3.6;   /* pacing leg along the shoulder (local z), ~7.9u */
+  var POST_X = 15.6;           /* east shoulder, local set frame: road edge 12, mast 13.5,
+                                  clear of rider lane (+6.8) and the gate sweep (13.5) */
+  var POST_Z = -3.3;           /* SOUTH of the equipment cabinet (14.4, z -2.3): out of its
+                                 occlusion shadow from the rider's -z approach (still-tuned),
+                                 between the mast corner and the pacing leg */
+  var PACE_LO = -11.5, PACE_HI = -3.9;   /* pacing leg along the shoulder (local z), ~7.6u */
   var WALK_SPEED = 1.4;        /* u/s — receipt-proven walking translate */
   var TURN_T = 0.5;            /* eased 180 yaw at the leg ends */
   var FADE = 0.25;             /* receipt-proven crossfade timing */
@@ -180,11 +182,11 @@
     pip.material.color.setRGB(PIP_R, PIP_G, PIP_B);
     pip.position.y = -0.25;
     halo = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: haloTexture(), transparent: true, opacity: 0.5, depthWrite: false,
+      map: haloTexture(), transparent: true, opacity: 0.55, depthWrite: false,
       fog: false, blending: THREE.AdditiveBlending
     }));
     halo.material.color.setRGB(1.0, 0.62, 0.26);
-    halo.scale.set(1.35, 1.35, 1);
+    halo.scale.set(2.0, 2.0, 1);   /* ~1.84u world — carries the read past 150u like the w25 lamp halos (2.3u) */
     halo.position.y = -0.25;
     lant.add(cap); lant.add(base); lant.add(pip); lant.add(halo);
     lant.position.set(0, -0.02, 0.02);
