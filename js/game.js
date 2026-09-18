@@ -3965,7 +3965,12 @@
      getPoint(u, reused) — zero per-frame allocation. No new geometry/lights/textures.
      Letterbox = #cinebarTop/#cinebarBot DOM divs (index.html), CSS-transitioned;
      startGame() kills them instantly — no bars in gameplay, ever. */
-  var FLY_SETTLE_ANG = Math.PI;
+  var FLY_SETTLE_ANG = Math.PI + 0.175;   /* WAVE 32: w30(a) settle study — +0.175 (10deg east)
+     swings the orbit onto the posted loiterer's half: the 15u settle is 13.21u ->
+     11.23u from him, his capsule +71% (3924 -> 6722px2), bike holds 124% of the pi
+     baseline. The minus sign backs AWAY (15.11u, 2341px2). Handoff continuity: the
+     last flyby knot (L3984 sin/cos*15) and settle() (L4016) both derive from this
+     one constant — moving it moves both ends, no pop. */
   function flyEase(t) { var s = t * t * (3 - 2 * t); return t + (s - t) * 0.9; }   /* slow-in/out, 10% linear tail so the orbit handoff keeps drift */
   var titleFlyby = (function () {
     var PX = roadX(30) + 6.8, PZ = 30, RX = roadX(30);   /* the parked player + road center (title truth) */

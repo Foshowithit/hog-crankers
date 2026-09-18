@@ -123,11 +123,19 @@
      < 0.72 bloom line; watchman lantern pip 0.618 precedent) */
   var PIP_R = 1.0, PIP_G = 0.50, PIP_B = 0.16;
 
+  /* W32 APRON: diffuse-only Lambert (emissive black, no metalness/roughness maps),
+     albedo = warm apron white dimmed for night: (0.98, 0.94, 0.86) x NIGHT grade —
+     TUNED BY STILL (art/w32 trail): must read white-ish at 10u, must never bloom,
+     must not ghost. Start is the literal spec value; steps recorded in the report. */
+  var AP_F = 1.0;                                          /* still-tuning factor */
+  var APRON_R = 0.98 * AP_F * NIGHT_R, APRON_G = 0.94 * AP_F * NIGHT_G, APRON_B = 0.86 * AP_F * NIGHT_B;
+
   /* ---- state ---- */
   var ready = false, warned = false;
   var mixer = null, idleAct = null, walkAct = null, cur = null, curName = '';
   var grp = null, model = null, skinned = null;
   var propBone = null;
+  var apronBone = null;        /* W32: spine bone the apron hangs on (null = skipped) */
 
   /* machine: idle (at home spot, randomized hold) / pause (leg-end stare) /
      turn (eased 0.5s into a walk heading) / leg (paced walk) / home (walk back) */
@@ -261,6 +269,7 @@
       idleAct.play(); cur = idleAct; curName = 'Idle';
 
       buildSkillet();
+      buildApron();
 
       grp.position.set(HOME_X, 0, HOME_Z);
       grp.rotation.y = ANCHOR_YAW;
@@ -303,6 +312,55 @@
       diner.add(pan);
       propBone = 'forecourt';
     }
+  }
+
+  /* ---- W32 APRON: the man reads as THE COOK from behind. Bib (chest front) + back
+     panel + waist-tie band + two crossing back straps, thin Lambert boxes childed to
+     a spine bone so the Idle clip carries them (the point is the BACK read: panel +
+     X straps). MATERIAL LAW: MeshLambertMaterial, DIFFUSE-ONLY — emissive black, no
+     metalness/roughness maps, albedo = apron white under the night grade (tuned by
+     still). One material instance, cloned per resident (never shared with the other
+     two men). Fallback: NO spine bone found = skip the apron entirely, warn once,
+     never throw. Bone-local axes are model-aligned at bind (the w31 skillet receipt:
+     +Z model-forward, +Y up) — apron offsets use those axes. ---- */
+  function buildApron() {
+    var spine = null;
+    var NAMES = ['Spine2', 'Spine1', 'Spine', 'Chest', 'spine'];
+    for (var n = 0; n < NAMES.length && !spine; n++) {
+      (function find(o) {
+        if (spine) return;
+        if (o.isBone && o.name === NAMES[n]) { spine = o; return; }
+        for (var i = 0; i < o.children.length; i++) find(o.children[i]);
+      })(model);
+    }
+    if (!spine) {
+      console.warn('[cook] no Spine2/Spine1/Spine/Chest bone — apron skipped (documented fallback)');
+      return;
+    }
+    apronBone = spine.name;
+    var mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    mat.color.setRGB(APRON_R, APRON_G, APRON_B);
+    mat.emissive.setRGB(0, 0, 0);          /* diffuse-only law, explicit */
+    var bib = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.42, 0.03), mat);
+    bib.name = 'cookApronBib32';
+    bib.position.set(0, 0.20, 0.115);      /* chest front, just proud of the body */
+    var back = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.30, 0.03), mat);
+    back.name = 'cookApronBack32';
+    back.position.set(0, -0.06, -0.115);   /* the point of the wave: the BACK read */
+    var tie = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.10, 0.31), mat);
+    tie.name = 'cookApronTie32';
+    tie.position.set(0, -0.26, 0);         /* waist band wrapping the torso */
+    /* bonus (spec: include if cheap and clean): two thin straps crossing on the
+       back panel — the "cook, from behind" signature */
+    var strapL = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.48, 0.02), mat);
+    strapL.name = 'cookApronStrapL32';
+    strapL.position.set(0, -0.04, -0.145);
+    strapL.rotation.z = 0.7;
+    var strapR = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.48, 0.02), mat);
+    strapR.name = 'cookApronStrapR32';
+    strapR.position.set(0, -0.04, -0.148);
+    strapR.rotation.z = -0.7;
+    spine.add(bib); spine.add(back); spine.add(tie); spine.add(strapL); spine.add(strapR);
   }
 
   try {
@@ -439,7 +497,7 @@
      Keys: ready, failed, clip, mode ('idle'|'pause'|'turn'|'leg'|'home'), phase
      ('hold'|'turn'|'leg'), tracking, targetYaw, yaw, anchorYaw, playerDist, dist,
      visible, world {x,y,z}, local {x,y,z}, box {x0,x1,z0,z1}, home {x,z}, scale,
-     skinnedCulled, mixerTime, playerFound, prop, bone ---- */
+     skinnedCulled, mixerTime, playerFound, prop, bone, + W32: apronOn ---- */
   W.HogCook = {
     state: function () {
       var wp = null, lz = null;
@@ -471,7 +529,8 @@
         mixerTime: mixer ? +mixer.time.toFixed(3) : -1,
         playerFound: !!playerG,
         prop: grp ? (function () { var p = null; grp.traverse(function (o) { if (!p && o.name === 'cookSkillet31') p = o; }); return p ? 'cookSkillet31' : null; })() : null,
-        bone: propBone
+        bone: propBone,
+        apronOn: !!apronBone
       };
     },
     /* rig-only deterministic handles (forcePace / faceNow / setYaw precedent) */

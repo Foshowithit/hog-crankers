@@ -74,7 +74,13 @@
   var HOME_X = -3.0;           /* his spot on the forecourt (station-local): between the
                                   westbound car sweep (car bodies lat -7.0..-4.5) and the
                                   bike start spot (+6.8), south of the pump band (z 0) */
-  var HOME_Z = -5.8;           /* under the canopy south face, in the title settle frame */
+  var HOME_Z = -6.15;          /* under the canopy south face, in the title settle frame.
+                                  W32: -5.8 -> -6.15 — 0.65u clear of the south-west canopy
+                                  column (station-local -3,-5.5, r0.28, game.js:859) so the
+                                  W32 COLUMN LEAN can post him against it without clipping
+                                  (the old spot put his walk line through the column slab
+                                  z -5.78..-5.22 — the w30(a) leftover). Still inside the
+                                  UNCHANGED walk box z[-6.4,-5.2]. */
   var BOX_X0 = -4.2, BOX_X1 = 4.2;   /* pacing walk box (station-local x), hard clamp */
   var BOX_Z0 = -6.4, BOX_Z1 = -5.2;  /* pacing walk box (station-local z), hard clamp */
   var WALK_SPEED = 1.4;        /* u/s — watchman receipt-proven walking translate */
@@ -91,6 +97,24 @@
   var TRACK_RATE = 2.5;        /* exponential yaw ease toward the player (spec ~2.5/s) */
   var TRACK_CAP = 3.2;         /* hard rad/s cap so the ease never whips */
   var TRACK_CLAMP = 1.9199;    /* +/-110 deg off his post heading — no exorcist spin */
+
+  /* W32 COLUMN LEAN: in idle he tips his shoulders against the nearest canopy column
+     (station-local -3,-5.5 — 0.65u behind his post). The lean lives ONLY on
+     rotation.x / rotation.z (rotation order YXZ: yaw outermost, tilts in body frame);
+     tracking / turn / home keep sole ownership of rotation.y — a leaning man never
+     walks, and tracking still works while leaned. leanT eases at LEAN_RATE per
+     second: -> 1 only in idle, -> 0 in every other mode (never a snap). */
+  var LEAN_ANG = 0.15;         /* tilt target rad (8.6 deg, spec 6-9 deg) */
+  var LEAN_RATE = 1.2;         /* leanT units/s toward its target (spec ~1.2/s) */
+  var LEAN_COL_X = -3, LEAN_COL_Z = -5.5;   /* the column he leans on (station-local) */
+
+  /* W32 CIGARETTE EMBER: ONE additive soft-dot sprite at his jaw on its own clock —
+     baseline 0.12, every 3.5-6s (re-rolled per cycle) a 1.6s sine flare to 0.5 peak.
+     Sub-bloom by construction: ember RGB luma 0.598 < 0.72 even at peak opacity.
+     Texture is the house soft-dot (HogVisuals) — no second texture object. */
+  var EMBER_BASE = 0.12, EMBER_PEAK = 0.5, EMBER_FLARE = 1.6;
+  var EMBER_LO = 3.5, EMBER_HI = 6.0;
+  var EMBER_R = 1.0, EMBER_G = 0.52, EMBER_B = 0.18;   /* warm ember, luma 0.5975 */
 
   /* anchor: his POST heading — east (+x, yaw +PI/2), watching the forecourt.
      Model natively faces +Z at yaw 0 (watchman receipt), so +x is yaw +PI/2. */
@@ -116,11 +140,29 @@
   var turnT = 0, turnFrom = 0, turnTo = 0, turnNext = '';
   var forcePaceOverride = null;/* rig-only: true/false deterministic pacing */
   var trackOverrideT = 0;      /* rig-only faceNow(): force tracking for N seconds */
+  var leanT = 0;               /* W32: 0 upright .. 1 fully leaned on the column */
+  var emberT = 0, emberPeriod = 4.6, emberMat = null, boneHead = null;   /* W32 ember */
 
   /* tracking readout (per frame numbers, no allocation) */
   var tracking = false, targetYaw = ANCHOR_YAW, playerDist = -1;
 
   function rand(lo, hi) { return lo + Math.random() * (hi - lo); }
+
+  /* ---- W32 ember halo texture: reuse the house soft-dot (cook.js pattern — the
+     SAME HogVisuals texture, never a second one; tiny canvas fallback if absent) ---- */
+  function haloTexture() {
+    if (W.HogVisuals && typeof W.HogVisuals.softDotTexture === 'function') {
+      return W.HogVisuals.softDotTexture();
+    }
+    var c = document.createElement('canvas'); c.width = 64; c.height = 64;
+    var g = c.getContext('2d');
+    var gr = g.createRadialGradient(32, 32, 2, 32, 32, 31);
+    gr.addColorStop(0, 'rgba(255,255,255,1)');
+    gr.addColorStop(0.4, 'rgba(255,255,255,0.45)');
+    gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(c);
+  }
 
   /* ---- clip fading (watchman receipt choreography) ---- */
   function fadeTo(next) {
@@ -164,6 +206,46 @@
     return from + step;
   }
 
+  /* ---- W32 lean clock: leanT eases toward 1 in idle, toward 0 in every other mode
+     (rate-limited, no snap — a leaning man must never walk). The tilt itself is
+     written to rotation.x / rotation.z ONLY, in body frame: world lean direction is
+     home -> column = (LEAN_COL_X-HOME_X, LEAN_COL_Z-HOME_Z) normalized = (0, 1)
+     (station yaw 0); rotated into body frame by his current yaw y that is
+     (dx_b, dz_b) = (dx*cos y - dz*sin y, dx*sin y + dz*cos y); under YXZ the
+     small-tilt form is rotation.x = A*dz_b, rotation.z = -A*dx_b. Yaw itself is
+     never touched here — tracking/turn/home own it. ---- */
+  var LEAN_DX, LEAN_DZ;        /* unit world (x,z) from his post toward the column */
+  (function () {
+    var dx = LEAN_COL_X - HOME_X, dz = LEAN_COL_Z - HOME_Z;
+    var l = Math.sqrt(dx * dx + dz * dz) || 1;
+    LEAN_DX = dx / l; LEAN_DZ = dz / l;
+  })();
+  function leanClock(dt) {
+    var tgt = mode === 'idle' ? 1 : 0;
+    if (leanT < tgt) { leanT += LEAN_RATE * dt; if (leanT > tgt) leanT = tgt; }
+    else if (leanT > tgt) { leanT -= LEAN_RATE * dt; if (leanT < tgt) leanT = tgt; }
+    if (grp) {
+      var cs = Math.cos(grp.rotation.y), sn = Math.sin(grp.rotation.y);
+      var a = LEAN_ANG * leanT;
+      grp.rotation.x = a * (LEAN_DX * sn + LEAN_DZ * cs);
+      grp.rotation.z = a * (LEAN_DZ * sn - LEAN_DX * cs);
+    }
+  }
+
+  /* ---- W32 ember clock: own accumulator, runs even when the mixer is distance-
+     frozen (plain number math on clamped dt — no NaN path). Baseline 0.12; each
+     cycle one 1.6s sine flare to 0.5; the 3.5-6s period re-rolls every cycle. ---- */
+  function emberClock(dt) {
+    emberT += dt;
+    var op = EMBER_BASE;
+    if (emberT >= emberPeriod) {
+      var f = (emberT - emberPeriod) / EMBER_FLARE;
+      if (f >= 1) { emberT -= emberPeriod + EMBER_FLARE; emberPeriod = rand(EMBER_LO, EMBER_HI); }
+      else op = EMBER_BASE + (EMBER_PEAK - EMBER_BASE) * Math.sin(f * Math.PI);
+    }
+    if (emberMat) emberMat.opacity = op;
+  }
+
   /* ---- load ---- */
   function onErr(err) {
     if (!warned) { warned = true; console.warn('[loiterer] load failed — dormant', (err && err.message) || err); }
@@ -202,6 +284,9 @@
 
       grp = new THREE.Group();
       grp.name = 'loiterer30';
+      grp.rotation.order = 'YXZ';  /* W32 lean: yaw outermost, tilts body-frame. Identical
+                                      matrices at zero tilt — no behavior delta for the
+                                      existing states. */
       grp.add(model);
 
       /* mixer + actions (clips named EXACTLY Idle / Walk per the w29 receipt) */
@@ -213,6 +298,32 @@
       }
       if (!idleAct || !walkAct) throw new Error('clips Idle/Walk missing');
       idleAct.play(); cur = idleAct; curName = 'Idle';
+
+      /* W32 cigarette ember: ONE additive sprite childed to the head bone (glTF bone
+         names are plain — the w31 skillet receipt proved Right/LeftHand). Bone-local
+         offset puts it just forward of the jaw. Fallback (documented, warned once):
+         model-root head-height offset — the sprite inherits no Idle bone sway there. */
+      (function () {
+        var head = null;
+        (function find(o) {
+          if (head) return;
+          if (o.isBone && (o.name === 'Head' || o.name === 'head' || o.name === 'Neck' || o.name === 'neck')) { head = o; return; }
+          for (var i = 0; i < o.children.length; i++) find(o.children[i]);
+        })(model);
+        var spr = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: haloTexture(), transparent: true, opacity: EMBER_BASE, depthWrite: false,
+          fog: false, blending: THREE.AdditiveBlending
+        }));
+        spr.material.color.setRGB(EMBER_R, EMBER_G, EMBER_B);
+        spr.scale.set(0.3, 0.3, 1);
+        if (head) { head.add(spr); spr.position.set(0.03, 0.12, 0.17); boneHead = head.name; }
+        else {
+          model.add(spr);
+          spr.position.set(0.03, 1.62, 0.18);
+          console.warn('[loiterer] no Head/head/Neck/neck bone — ember on model root at head height (documented fallback)');
+        }
+        emberMat = spr.material;
+      })();
 
       grp.position.set(HOME_X, 0, HOME_Z);
       grp.rotation.y = ANCHOR_YAW;
@@ -326,6 +437,12 @@
     var dt = prevT ? Math.min((now - prevT) / 1000, 0.05) : 0.016;
     prevT = now;
 
+    /* W32 clocks run BEFORE the distance-gate return: when the mixer freezes behind
+       NEAR_REAR / past SKIP_DIST the lean ease and the ember cycle still run on the
+       clock (plain number accumulators on clamped dt — no NaN when the mixer skips) */
+    leanClock(dt);
+    emberClock(dt);
+
     /* distance gate vs the camera: fog owns him past SKIP_DIST — freeze everything
        (matters on the ride-out; during title he is at dist ~0 so the mixer runs) */
     var dz = gasStation.position.z - cam.position.z;
@@ -353,7 +470,8 @@
      ready, failed, clip, mode ('idle'|'pause'|'turn'|'leg'|'home'), phase
      ('hold'|'turn'|'leg'), tracking, targetYaw, yaw, anchorYaw, playerDist, dist,
      visible, world {x,y,z}, local {x,y,z}, box {x0,x1,z0,z1}, home {x,z}, scale,
-     skinnedCulled, mixerTime, playerFound ---- */
+     skinnedCulled, mixerTime, playerFound, + W32: leanT, emberT, emberPeriod,
+     headBone ---- */
   W.HogLoiterer = {
     state: function () {
       var wp = null, lz = null;
@@ -383,7 +501,11 @@
         scale: SCALE,
         skinnedCulled: skinned ? skinned.frustumCulled : null,
         mixerTime: mixer ? +mixer.time.toFixed(3) : -1,
-        playerFound: !!playerG
+        playerFound: !!playerG,
+        leanT: +leanT.toFixed(3),
+        emberT: +emberT.toFixed(2),
+        emberPeriod: +emberPeriod.toFixed(2),
+        headBone: boneHead
       };
     },
     /* rig-only deterministic handles (forcePace / setYaw precedent) */
