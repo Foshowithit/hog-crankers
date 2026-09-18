@@ -3,14 +3,22 @@
    no IAB screenshot wedge, real PNG shots.
    Usage: node run-local.mjs [scenarioId ...]   (no args = all 5)
 */
+import { createRequire } from 'node:module';
+import { execSync } from 'node:child_process';
+import path from 'path';
+import { pathToFileURL } from 'node:url';
 import { runSuite } from './executor.mjs';
 
 const PLAYWRIGHT_PATHS = [
-  'file:///Users/adam26/.nvm/versions/node/v24.15.0/lib/node_modules/playwright/index.mjs',
-];
+  process.env.PLAYWRIGHT_ENTRY,
+  (() => { try { return pathToFileURL(createRequire(import.meta.url).resolve('playwright')).href; } catch { return null; } })(),
+  (() => { try { return pathToFileURL(path.join(execSync('npm root -g').toString().trim(), 'playwright', 'index.mjs')).href; } catch { return null; } })(),
+].filter(Boolean);
 let pw = null;
-for (const p of PLAYWRIGHT_PATHS) { try { pw = await import(p); break; } catch {} }
-if (!pw) { console.error('playwright not importable'); process.exit(2); }
+for (const p of PLAYWRIGHT_PATHS) {
+  try { const m = await import(p); pw = m.chromium ? m : m.default; break; } catch {}
+}
+if (!pw || !pw.chromium) { console.error('playwright not importable (set PLAYWRIGHT_ENTRY)'); process.exit(2); }
 
 const browser = await pw.chromium.launch({
   channel: 'chrome',

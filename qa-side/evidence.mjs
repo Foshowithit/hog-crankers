@@ -5,10 +5,20 @@
    counts console errors. DPR 2 for judge-visible detail. */
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
+import { createRequire } from 'node:module';
+import { execSync } from 'node:child_process';
 
-const PLAYWRIGHT_PATH = 'file:///Users/adam26/.nvm/versions/node/v24.15.0/lib/node_modules/playwright/index.mjs';
-const pw = await import(PLAYWRIGHT_PATH);
+function resolvePlaywrightEntry() {
+  if (process.env.PLAYWRIGHT_ENTRY) return process.env.PLAYWRIGHT_ENTRY;
+  try { return pathToFileURL(createRequire(import.meta.url).resolve('playwright')).href; } catch {}
+  try {
+    return pathToFileURL(path.join(execSync('npm root -g').toString().trim(), 'playwright', 'index.mjs')).href;
+  } catch {}
+  throw new Error('playwright not importable — set PLAYWRIGHT_ENTRY to its index.mjs');
+}
+const _pwMod = await import(resolvePlaywrightEntry());
+const pw = _pwMod.chromium ? _pwMod : _pwMod.default;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT = path.join(__dirname, 'reports', 's1-evidence');
 fs.mkdirSync(OUT, { recursive: true });

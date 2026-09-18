@@ -1,13 +1,15 @@
 /* qa-trooper executor — runs SCENARIOS against a URL via a browser-use tab.
-   Usage from node_repl (fresh kernel):
-     const { runSuite } = await import('/Users/adam26/.zcode/workspace/default/game-fleet/qa/executor.mjs');
+   Usage: import { runSuite } from './executor.mjs' in a fresh node kernel.
      const rep = await runSuite(tab, baseUrl);        // emits screenshots as it goes
-   Writes qa/reports/<ts>/report.json. Browser-use evaluate() serializes the
-   function — no closures over node scope inside page callbacks. */
+   Writes qa/reports/<ts>/report.json (relative to this file). Browser-use
+   evaluate() serializes the function — no closures over node scope inside page
+   callbacks. */
 import { SCENARIOS } from './scenarios.js';
 import { writeFileSync, mkdirSync } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = '/Users/adam26/.zcode/workspace/default/hog-crankers-side/qa-side';
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
