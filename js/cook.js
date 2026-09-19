@@ -314,15 +314,27 @@
     }
   }
 
-  /* ---- W32 APRON: the man reads as THE COOK from behind. Bib (chest front) + back
-     panel + waist-tie band + two crossing back straps, thin Lambert boxes childed to
-     a spine bone so the Idle clip carries them (the point is the BACK read: panel +
-     X straps). MATERIAL LAW: MeshLambertMaterial, DIFFUSE-ONLY — emissive black, no
-     metalness/roughness maps, albedo = apron white under the night grade (tuned by
-     still). One material instance, cloned per resident (never shared with the other
-     two men). Fallback: NO spine bone found = skip the apron entirely, warn once,
-     never throw. Bone-local axes are model-aligned at bind (the w31 skillet receipt:
-     +Z model-forward, +Y up) — apron offsets use those axes. ---- */
+  /* ---- W34 APRON SEAM CONTRAST (attempt-5): w33 geometry was STOPPED — two
+     consecutive taste fails (punch 37). The instrumented diagnosis: relief
+     EXISTS causally (bib vis-vs-hid meanAbsDiff 0.0600) but sits BELOW the
+     sighted threshold — same-hue geometry under the flat night Lambert cannot
+     make its own shadow (a recessed face still faces camera/light), so more
+     width/depth moved nothing sighted. The lever now is CONTRAST PAINT: the
+     two bib welt cords and the full waist band wear a DARK SEAM TONE
+     (APRON x 0.54), so the bib breaks field -> seam -> placket -> seam ->
+     field and the waist breaks with a full-width dark fold. Attempt-4
+     geometry is kept (proud placket, 0.05u cords, 45mm tie shadow gap).
+     MATERIAL LAW (w32, unchanged): MeshLambertMaterial, DIFFUSE-ONLY —
+     emissive black, no metalness/roughness maps, albedo = apron white under
+     the night grade (tuned by still). One material instance per tone, cloned
+     per resident (never shared with the other two men). Tones now 2: field
+     1.0 + seam 0.54 (warm ratios kept — seams read shadowed cloth, never the
+     kill-list gray). The rig's 0.50 darkest/bib floor applies to FIELD
+     surfaces only; the seam waiver lives in qa/w34-rig.mjs (contrast deltas,
+     not absolutes). EXPECT_APRON stays 9. Fallback: NO spine bone found =
+     skip the apron entirely, warn once, never throw. Bone-local axes are
+     model-aligned at bind (the w31 skillet receipt: +Z model-forward, +Y up)
+     — apron offsets use those axes. ---- */
   function buildApron() {
     var spine = null;
     var NAMES = ['Spine2', 'Spine1', 'Spine', 'Chest', 'spine'];
@@ -341,15 +353,72 @@
     var mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
     mat.color.setRGB(APRON_R, APRON_G, APRON_B);
     mat.emissive.setRGB(0, 0, 0);          /* diffuse-only law, explicit */
-    var bib = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.42, 0.03), mat);
+    /* W33-ATTEMPT-4 TEETH (attempt-3 sighted: bib-vis still a flat bright
+       slab — 0.03u welts ≈5px at 6u washed under night/bloom/compression,
+       tone steps 0.28/0.30 clipped (plateau 0.85-0.90), and the tie face
+       (+0.065) sat only ~5mm behind the skirt so the waist read
+       unbroken. Three teeth, same MATERIAL LAW (cloned Lamberts, emissive
+       black, no maps, one hue, now 2 tones — field + one shared shade/fold
+       gain, EXPECT_APRON stays 9):
+       (1) WELT CORDS widen 0.03->0.05 and stand ~11.5mm proud (face +0.144
+       vs bib face +0.1325) with the fold gain deepened 0.70->0.75 — the
+       sighted teeth are the WIDER cords (0.05u ≈ 8px at 6u, resolvable)
+       plus the taller side walls shading dark, NOT darker paint: the rig's
+       darkest/bib bar reads hex as sRGB and converts with pow(v,2.2), so
+       gain g reads as ~g^2.2 and the 0.50 floor means gain must stay >=
+       0.73 (0.70 reads 0.456 FAIL; 0.75 reads ~0.53 PASS with quantization
+       margin). Judge ruling "same white with seam shading" holds. (2) PLACKET widens 0.09->0.11 and stands ~25.5mm
+       proud (face +0.158) — taller x-normal side walls catch less frontal
+       moon and read as dark seam edges flanking the bright strip; (3) TIE
+       recessed to a REAL shadow gap (z -0.02->-0.06, face +0.075, 45mm
+       behind the skirt face +0.12) — skirt cloth in front, air, then tie
+       band, so the waist breaks bib -> fold -> skirt -> SHADOW -> band. */
+    var matSeam = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    matSeam.color.setRGB(APRON_R * 0.54, APRON_G * 0.54, APRON_B * 0.54);
+    matSeam.emissive.setRGB(0, 0, 0);    /* W34 seam tone, 0.54 gain: reads ~0.26 in the rig's
+       pow(v,2.2) bar — BELOW the 0.50 floor ON PURPOSE (contrast is the lever now; attempt-4
+       stayed >= 0.73 for that floor and bought nothing sighted). The floor keeps applying to
+       FIELD surfaces (bib-rect median); the w34-rig waiver asserts seam CONTRAST deltas
+       instead — patch-p25 gap, causal hide-seams control, waist-band dark minimum. 0.54 multiplies
+       the warm apron ratios, so seams read shadowed cloth, not kill-list gray. Replaces the
+       w33 shade/fold pair — 2 tones total, EXPECT_APRON 9. */
+    var bib = new THREE.Mesh(new THREE.BoxGeometry(0.40, 0.62, 0.035), mat);
     bib.name = 'cookApronBib32';
-    bib.position.set(0, 0.20, 0.115);      /* chest front, just proud of the body */
+    bib.position.set(0, 0.16, 0.115);      /* taller+wider: swallows the tie paint, overlaps the tie band */
+    /* raised center strip, its face PROUD of the bib face by ~25.5mm: catches
+       the moon rim and reads as a bright placket stripe dividing the bib;
+       the taller x-normal side walls read as dark seam edges */
+    var placket = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.60, 0.03), mat);
+    placket.name = 'cookApronPlacket33';
+    placket.position.set(0, 0.16, 0.143);
+    /* flanking seam cords: attempt-4 geometry kept (0.05u ≈ 8px at 6u, ~11.5mm
+       proud of the bib face) now in the DARK seam tone — the bright placket
+       and field between two dark seams is the contrast compression can't eat
+       (same-hue cords washed out sighted; punch 37). Same rig names
+       (EXPECT_APRON 9). */
+    var weltL = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.60, 0.012), matSeam);
+    weltL.name = 'cookApronWeltL33';
+    weltL.position.set(-0.075, 0.16, 0.138);
+    var weltR = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.60, 0.012), matSeam);
+    weltR.name = 'cookApronWeltR33';
+    weltR.position.set(0.075, 0.16, 0.138);
+    /* apron skirt: overlaps the bib bottom, its face recessed 12.5mm behind
+       the bib face (attempt-4 step kept), now in the DARK seam tone — the
+       full-width band at y~-0.15 reads as a fold with a real TONE step, so
+       the column breaks field -> DARK BAND (attempt-4's same-hue skirt read
+       unbroken sighted). Replaces the buried waist welt, same name. */
+    var waistWelt = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.16, 0.04), matSeam);
+    waistWelt.name = 'cookApronWaistWelt33';
+    waistWelt.position.set(0, -0.20, 0.10);
     var back = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.30, 0.03), mat);
     back.name = 'cookApronBack32';
     back.position.set(0, -0.06, -0.115);   /* the point of the wave: the BACK read */
-    var tie = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.10, 0.31), mat);
+    var tie = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.10, 0.27), mat);
     tie.name = 'cookApronTie32';
-    tie.position.set(0, -0.26, 0);         /* waist band wrapping the torso */
+    tie.position.set(0, -0.26, -0.06);    /* W33-ATTEMPT-4 tooth (3): REAL shadow gap — face +0.075 sits
+       45mm behind the skirt face (+0.12), with air between skirt cloth and band, so the waist
+       breaks bib -> fold -> skirt -> SHADOW -> band (attempt-3 trap: face +0.065 sat only ~5mm
+       behind the skirt and the tie face overlapped the waist read, so it read unbroken at 6u) */
     /* bonus (spec: include if cheap and clean): two thin straps crossing on the
        back panel — the "cook, from behind" signature */
     var strapL = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.48, 0.02), mat);
@@ -360,7 +429,8 @@
     strapR.name = 'cookApronStrapR32';
     strapR.position.set(0, -0.04, -0.148);
     strapR.rotation.z = -0.7;
-    spine.add(bib); spine.add(back); spine.add(tie); spine.add(strapL); spine.add(strapR);
+    spine.add(bib); spine.add(placket); spine.add(weltL); spine.add(weltR);
+    spine.add(waistWelt); spine.add(back); spine.add(tie); spine.add(strapL); spine.add(strapR);
   }
 
   try {
