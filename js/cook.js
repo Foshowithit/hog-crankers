@@ -150,6 +150,76 @@
   /* tracking readout (per frame numbers, no allocation) */
   var tracking = false, targetYaw = ANCHOR_YAW, playerDist = -1;
 
+  /* W36 RESIDENTS ANSWER: Pack-style greet on FIRST TRACK_DIST entry per pass while
+     riding. Canon string LOCKED (byte-intact): "YUENGS AND WINGS MFER! AROOOO!".
+     Edge is on the EFFECTIVE read (tracking && riding): a title-screen approach
+     never arms it, so the ride-start entry still fires. Once-per-pass: greetDone
+     set on fire, reset when |dist|>90 OR the signed dist flips past the site
+     (rode past). 30s cooldown per resident. On fire: (1) toast via HogGreet.fire
+     (w15 dedupe owns repeats), (2) arooPop x4 inside HogGreet.fire, (3) skillet-
+     halo 1.6s kick (x1.8 on the ember sprite scale), (4) the existing 2s faceNow
+     hold. Gate: HogGreet.isRiding() — ride/overcrank only, never title;
+     GLB-dormant (ready=false) never fires. Zero per-frame alloc: cached handles,
+     number math only — the setTimeout x4 lives on the fire path, never per frame. */
+  var GREET_LINE = 'YUENGS AND WINGS MFER! AROOOO!';
+  var GREET_DIST = 70;         /* == TRACK_DIST: fire on the rung-4 entry edge */
+  var GREET_RESET = 90;        /* reset once |dist| > 90 */
+  var GREET_COOL = 30;         /* seconds between greets */
+  var greetDone = false, greetN = 0, greetLast = -1e9, greetPrevEff = false;
+  var greetKickT = 0;          /* skillet-halo 1.6s kick countdown */
+  var greetEmber = null, greetEmberBaseX = 0, greetEmberBaseY = 0;
+  function greetRiding() {
+    if (W.HogGreet && typeof W.HogGreet.isRiding === 'function') {
+      try { return !!W.HogGreet.isRiding(); } catch (e) { return false; }
+    }
+    return false;
+  }
+  function greetResetCheck(d) {
+    var ad = d < 0 ? -d : d;
+    if (ad > GREET_RESET) { greetDone = false; return; }
+    var sdz = diner ? (diner.position.z - cam.position.z) : 0;
+    if (d < GREET_DIST && sdz < 0) greetDone = false;   /* rode past: signed flip */
+  }
+  function greetKickStart() {
+    if (!greetEmber) {
+      if (grp) grp.traverse(function (o) {
+        if (!greetEmber && o.name === 'cookSkillet31' && o.children) {
+          for (var i = 0; i < o.children.length; i++) {
+            if (o.children[i] && o.children[i].isSprite) { greetEmber = o.children[i]; break; }
+          }
+        }
+      });
+      if (greetEmber) { greetEmberBaseX = greetEmber.scale.x; greetEmberBaseY = greetEmber.scale.y; }
+    }
+    if (greetEmber) {
+      /* judge fix: 1.5x for 1s was indistinguishable from the ambient embers at
+         dusk range — 1.8x held 1.6s reads as a real flare in the greet still */
+      greetEmber.scale.set(greetEmberBaseX * 1.8, greetEmberBaseY * 1.8, 1);
+      greetKickT = 1.6;
+    }
+  }
+  function greetKickClock(dt) {
+    if (greetKickT > 0) {
+      greetKickT -= dt;
+      if (greetKickT <= 0 && greetEmber) greetEmber.scale.set(greetEmberBaseX, greetEmberBaseY, 1);
+    }
+  }
+  function greetMaybeFire(d, wasEff, nowEff, nowMs) {
+    if (!ready || !nowEff || wasEff) return;   /* FIRST effective entry edge only */
+    var ad = d < 0 ? -d : d;
+    if (ad >= GREET_DIST) return;
+    greetResetCheck(d);
+    if (greetDone) return;
+    if ((nowMs / 1000 - greetLast) < GREET_COOL) return;
+    if (!greetRiding()) return;
+    greetDone = true; greetN++; greetLast = nowMs / 1000;
+    try {
+      if (W.HogGreet && typeof W.HogGreet.fire === 'function') W.HogGreet.fire('DED HOG COOK', GREET_LINE);
+    } catch (e) { /* toast is garnish — the track read is the feature */ }
+    greetKickStart();
+    trackOverrideT = 2.0;   /* the existing 2s faceNow hold */
+  }
+
   function rand(lo, hi) { return lo + Math.random() * (hi - lo); }
   function normAng(a) { return Math.atan2(Math.sin(a), Math.cos(a)); }
 
@@ -571,8 +641,15 @@
       var ddz = playerG.position.z - cookWZ;
       playerDist = Math.sqrt(ddx * ddx + ddz * ddz);
     } else playerDist = -1;
+    var wasEff36 = greetPrevEff;
     tracking = (trackOverrideT > 0) || (!!playerG && playerDist < TRACK_DIST);
     if (tracking) targetYaw = trackedYaw();
+    greetKickClock(dt);
+    var greetD36 = (playerDist === -1) ? 1e9 : playerDist;
+    greetResetCheck(greetD36);
+    var nowEff36 = tracking && greetRiding();
+    greetMaybeFire(greetD36, wasEff36, nowEff36, now);
+    greetPrevEff = nowEff36;
 
     tickMachine(dt);
 
@@ -618,7 +695,9 @@
         playerFound: !!playerG,
         prop: grp ? (function () { var p = null; grp.traverse(function (o) { if (!p && o.name === 'cookSkillet31') p = o; }); return p ? 'cookSkillet31' : null; })() : null,
         bone: propBone,
-        apronOn: !!apronBone
+        apronOn: !!apronBone,
+        greetN: greetN,
+        lastGreet: greetN > 0 ? +greetLast.toFixed(2) : -1
       };
     },
     /* rig-only deterministic handles (forcePace / faceNow / setYaw precedent) */

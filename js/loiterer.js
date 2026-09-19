@@ -146,6 +146,68 @@
   /* tracking readout (per frame numbers, no allocation) */
   var tracking = false, targetYaw = ANCHOR_YAW, playerDist = -1;
 
+  /* W36 RESIDENTS ANSWER: Pack-style greet on FIRST TRACK_DIST entry per pass while
+     riding. Canon string LOCKED (byte-intact): "CRANK THAT HOG BABY!".
+     Edge is on the EFFECTIVE read (tracking && riding): a title-screen approach
+     never arms it, so the ride-start entry still fires. Once-per-pass: greetDone
+     set on fire, reset when |dist|>90 OR the signed dist flips past the site
+     (rode past). 30s cooldown per resident. On fire: (1) toast via HogGreet.fire
+     (w15 dedupe owns repeats), (2) arooPop x4 inside HogGreet.fire, (3) ember-flare
+     restart kick (restart the W32 flare cycle + pin opacity at peak for 1s), (4) the
+     existing 2s faceNow hold. Gate: HogGreet.isRiding() — ride/overcrank only,
+     never title; GLB-dormant (ready=false) never fires. Zero per-frame alloc. */
+  var GREET_LINE = 'CRANK THAT HOG BABY!';
+  var GREET_DIST = 70;
+  var GREET_RESET = 90;
+  var GREET_COOL = 30;
+  var greetDone = false, greetN = 0, greetLast = -1e9, greetPrevEff = false;
+  var greetKickT = 0;
+  function greetRiding() {
+    if (W.HogGreet && typeof W.HogGreet.isRiding === 'function') {
+      try { return !!W.HogGreet.isRiding(); } catch (e) { return false; }
+    }
+    return false;
+  }
+  function greetRolling() {
+    if (W.HogGreet && typeof W.HogGreet.isRolling === 'function') {
+      try { return !!W.HogGreet.isRolling(); } catch (e) { return false; }
+    }
+    return true;   /* bridge absent -> legacy edge shape */
+  }
+  function greetResetCheck(d) {
+    var ad = d < 0 ? -d : d;
+    if (ad > GREET_RESET) { greetDone = false; return; }
+    var sdz = gasStation ? (gasStation.position.z - cam.position.z) : 0;
+    if (d < GREET_DIST && sdz < 0) greetDone = false;
+  }
+  function greetKickStart() {
+    emberT = emberPeriod;
+    emberPeriod = rand(EMBER_LO, EMBER_HI);
+    greetKickT = 1.0;
+  }
+  function greetKickClock(dt) {
+    if (greetKickT > 0) {
+      greetKickT -= dt;
+      if (emberMat) emberMat.opacity = EMBER_PEAK;
+    }
+  }
+  function greetMaybeFire(d, wasEff, nowEff, nowMs) {
+    if (!ready || !nowEff || wasEff) return;
+    var ad = d < 0 ? -d : d;
+    if (ad >= GREET_DIST) return;
+    greetResetCheck(d);
+    if (greetDone) return;
+    if ((nowMs / 1000 - greetLast) < GREET_COOL) return;
+    /* rolling already lives in the effective edge (greetRolling at the update
+       loop) — a 0-KPH player never forms an edge, so no veto needed here */
+    greetDone = true; greetN++; greetLast = nowMs / 1000;
+    try {
+      if (W.HogGreet && typeof W.HogGreet.fire === 'function') W.HogGreet.fire('DED HOG LOITERER', GREET_LINE);
+    } catch (e) { }
+    greetKickStart();
+    trackOverrideT = 2.0;
+  }
+
   function rand(lo, hi) { return lo + Math.random() * (hi - lo); }
 
   /* ---- W32 ember halo texture: reuse the house soft-dot (cook.js pattern — the
@@ -458,6 +520,17 @@
     } else playerDist = -1;
     tracking = (trackOverrideT > 0) || (!!playerG && playerDist < TRACK_DIST);
     if (tracking) targetYaw = trackedYaw();
+    var greetD36 = (playerDist === -1) ? 1e9 : playerDist;
+    greetResetCheck(greetD36);
+    /* rolling is part of the EFFECTIVE state (judge fix, run-4 lesson): the
+       station sits on the spawn, so a bare tracking&&riding edge fires at 0 KPH
+       and an in-function rolling veto would EAT that one-shot edge (greet never
+       fires). Folding isRolling() in keeps the edge ARMED until actual motion —
+       the greet then fires on the roll-past edge, toast never over the tutorial. */
+    var nowEff36 = tracking && greetRiding() && greetRolling();
+    greetMaybeFire(greetD36, greetPrevEff, nowEff36, now);
+    greetPrevEff = nowEff36;
+    greetKickClock(dt);
 
     tickMachine(dt);
 
@@ -505,7 +578,9 @@
         leanT: +leanT.toFixed(3),
         emberT: +emberT.toFixed(2),
         emberPeriod: +emberPeriod.toFixed(2),
-        headBone: boneHead
+        headBone: boneHead,
+        greetN: greetN,
+        lastGreet: greetN > 0 ? +greetLast.toFixed(2) : -1
       };
     },
     /* rig-only deterministic handles (forcePace / setYaw precedent) */

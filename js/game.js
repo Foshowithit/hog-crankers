@@ -3710,9 +3710,9 @@
     return t;
   }
 
-  function arooPop() {
+  function arooPop(cls) {
     var s = document.createElement('span');
-    s.className = 'aropop';
+    s.className = cls ? 'aropop ' + cls : 'aropop';
     s.textContent = pick(['AROOOO', 'AROOOOO', 'HELL YEAH BROTHER', 'AROOGA', 'CRANK IT MFER', 'AROOOOOO']);
     s.style.left = (rand(12, 78)) + '%';
     s.style.top = (rand(30, 70)) + '%';
@@ -5400,6 +5400,31 @@
         px: +game.x.toFixed(2), pz: +game.z.toFixed(2),
         carPos: carsW
       };
+    }
+  };
+
+  /* WAVE 36 RESIDENTS ANSWER: Pack-voice greet bridge for the resident scripts.
+     cook/loiterer/watchman run in their own IIFEs — toast/arooPop are closed over
+     in this scope, unreachable from resident scope — so the rung-5 greet calls
+     through this one hook (preferred over duplicating DOM code per resident).
+     isRiding() gates ride/overcrank only (hud-up, pb.js visible precedent — never
+     title). fire() is the whole on-fire beat: Pack-voice toast (w15 dedupe owns
+     repeats, cap 4 untouched) + arooPop x4 at ~90ms stagger (crankPerfect keeps
+     its 8x hierarchy — the 8x loop below is NOT touched). */
+  window.HogGreet = {
+    isRiding: function () {
+      var hud = document.getElementById('hud');
+      return (mode === 'ride' || mode === 'overcrank') && !!(hud && hud.style.display === 'block');
+    },
+    /* rolling gate (judge fix): greet waits for actual motion — a 0-KPH greet
+       collides with the ride-start tutorial read. >8u/s ~ >29kph on the dial. */
+    isRolling: function () { return game.speed > 8; },
+    fire: function (label, line) {
+      toast(label, line);
+      /* greet pops are the RED greetpop variant — bare .aropop stays the amber
+         crank voice (shared call sites 3770/3788/3800/4180 untouched) */
+      for (var gi = 0; gi < 4; gi++) setTimeout(function () { arooPop('greetpop'); }, gi * 90);
+      return true;
     }
   };
 

@@ -75,6 +75,122 @@
   var forcePaceOverride = null;/* rig-only: true/false deterministic pacing */
   var lastTrainX = null, stopT = 0;
 
+  /* ---- locate the player group (unnamed; find the bike's stand marker —
+     cook.js / loiterer.js receipt: climb to the scene-top parent) ---- */
+  var playerG = null;
+  (function () {
+    scene.traverse(function (o) {
+      if (playerG || !o.userData || !o.userData.stand) return;
+      var top = o;
+      while (top.parent && top.parent !== scene) top = top.parent;
+      if (top.parent === scene) playerG = top;
+    });
+  })();
+  var greetPlayerDist = -1;   /* probe read: -1 sentinel = no player (Infinity) */
+
+  /* W36 RESIDENTS ANSWER: Pack-style greet on FIRST <70u post proximity per pass
+     while riding — a NEW proximity branch (this file has no rung-4 tracking).
+     Fires both during a hold-show staged stop and on a plain ride-by: same <70u
+     read against the post world pos (POST_X/POST_Z through the set's curve yaw).
+     Canon string LOCKED (byte-intact): "HOLD SHOW — PACK COMIN THROUGH!".
+     Edge is on the EFFECTIVE read (near && riding): a title-screen approach never
+     arms it. Once-per-pass: greetDone set on fire, reset when |dist|>90 OR the
+     signed set-dist flips past the site (rode past). 30s cooldown. On fire:
+     (1) toast via HogGreet.fire (w15 dedupe owns repeats), (2) arooPop x4 inside
+     HogGreet.fire, (3) lantern-halo 1.6s kick (x1.8 on the halo sprite scale),
+     (4) a 2s facing hold toward the player (greetHoldT — the faceNow equivalent
+     this file never had). Gate: HogGreet.isRiding() — ride/overcrank only, never
+     title; GLB-dormant (ready=false) never fires. Zero per-frame alloc. */
+  var GREET_LINE = 'HOLD SHOW — PACK COMIN THROUGH!';
+  var GREET_DIST = 70;
+  var GREET_RESET = 90;
+  var GREET_COOL = 30;
+  var GREET_CLAMP = 1.9199;   /* +/-110deg off his post heading — no exorcist spin */
+  var greetDone = false, greetN = 0, greetLast = -1e9, greetPrevEff = false;
+  var greetKickT = 0, greetHoldT = 0;
+  var greetHaloBaseX = 0, greetHaloBaseY = 0;
+  function greetRiding() {
+    if (W.HogGreet && typeof W.HogGreet.isRiding === 'function') {
+      try { return !!W.HogGreet.isRiding(); } catch (e) { return false; }
+    }
+    return false;
+  }
+  function greetNorm(a) { return Math.atan2(Math.sin(a), Math.cos(a)); }
+  function greetPostDist() {
+    /* post world pos through the set yaw (placeXing curve-yaw receipt) */
+    if (!playerG) { greetPlayerDist = -1; return 1e9; }
+    var Ry = xingG.rotation.y, c = Math.cos(Ry), s = Math.sin(Ry);
+    var pwx = xingG.position.x + POST_X * c + POST_Z * s;
+    var pwz = xingG.position.z - POST_X * s + POST_Z * c;
+    var dx = playerG.position.x - pwx, dz = playerG.position.z - pwz;
+    var d = Math.sqrt(dx * dx + dz * dz);
+    greetPlayerDist = d;
+    return d;
+  }
+  function greetResetCheck(d) {
+    var ad = d < 0 ? -d : d;
+    if (ad > GREET_RESET) { greetDone = false; return; }
+    var sdz = xingG ? (xingG.position.z - cam.position.z) : 0;
+    if (d < GREET_DIST && sdz < 0) greetDone = false;   /* rode past: signed flip */
+  }
+  function greetKickStart() {
+    if (!halo) return;
+    if (!greetHaloBaseX) { greetHaloBaseX = halo.scale.x; greetHaloBaseY = halo.scale.y; }
+    /* judge fix: match the cook — 1.8x held 1.6s so the flare reads at dusk range */
+    halo.scale.set(greetHaloBaseX * 1.8, greetHaloBaseY * 1.8, 1);
+    greetKickT = 1.6;
+  }
+  function greetKickClock(dt) {
+    if (greetKickT > 0) {
+      greetKickT -= dt;
+      if (greetKickT <= 0 && halo) halo.scale.set(greetHaloBaseX || 2.0, greetHaloBaseY || 2.0, 1);
+    }
+  }
+  function greetFaceClock(dt) {
+    /* 2s facing hold toward the player: eased like the rung-4 track ease
+       (2.5/s exp, 3.2 rad/s cap, clamped cone), then release back to the machine */
+    if (greetHoldT <= 0 || !grp) return;
+    greetHoldT -= dt;
+    var want = FACE_ROAD_YAW;
+    if (playerG) {
+      var Ry = xingG.rotation.y, c = Math.cos(Ry), s = Math.sin(Ry);
+      var wwx = xingG.position.x + (grp.position.x * c + grp.position.z * s);
+      var wwz = xingG.position.z + (-grp.position.x * s + grp.position.z * c);
+      var ox = playerG.position.x - wwx, oz = playerG.position.z - wwz;
+      var lx = ox * c - oz * s, lz = ox * s + oz * c;
+      if (lx * lx + lz * lz > 0.01) want = Math.atan2(lx, lz);
+      var rel = greetNorm(want - FACE_ROAD_YAW);
+      if (rel > GREET_CLAMP) want = FACE_ROAD_YAW + GREET_CLAMP;
+      else if (rel < -GREET_CLAMP) want = FACE_ROAD_YAW - GREET_CLAMP;
+    }
+    var e = greetNorm(want - grp.rotation.y);
+    var step = 2.5 * dt;
+    if (step > 1) step = 1;
+    var maxStep = 3.2 * dt, de = e * step;
+    if (de > maxStep) de = maxStep;
+    else if (de < -maxStep) de = -maxStep;
+    grp.rotation.y = grp.rotation.y + de;
+    if (greetHoldT <= 0) {
+      if (mode === 'idle') grp.rotation.y = FACE_ROAD_YAW;
+      else if (phase === 'leg') grp.rotation.y = walkYaw(legDir);
+    }
+  }
+  function greetMaybeFire(d, wasEff, nowEff, nowMs) {
+    if (!ready || !nowEff || wasEff) return;   /* FIRST effective entry edge only */
+    var ad = d < 0 ? -d : d;
+    if (ad >= GREET_DIST) return;
+    greetResetCheck(d);
+    if (greetDone) return;
+    if ((nowMs / 1000 - greetLast) < GREET_COOL) return;
+    if (!greetRiding()) return;
+    greetDone = true; greetN++; greetLast = nowMs / 1000;
+    try {
+      if (W.HogGreet && typeof W.HogGreet.fire === 'function') W.HogGreet.fire('CROSSING WATCHMAN', GREET_LINE);
+    } catch (e) { /* toast is garnish — the proximity read is the feature */ }
+    greetKickStart();
+    greetHoldT = 2.0;   /* the faceNow-equivalent 2s hold */
+  }
+
   /* ---- lantern texture: reuse the house soft-dot (markers28 pattern) ---- */
   function haloTexture() {
     if (W.HogVisuals && typeof W.HogVisuals.softDotTexture === 'function') {
@@ -326,6 +442,18 @@
       }
     }
 
+    /* W36 greet clocks + fire check: kick + face-hold easing run on the clock (plain
+       number accumulators — no NaN when the mixer skips), then the proximity check.
+       The face clock runs AFTER tickPace each frame so the 2s hold wins even mid
+       pace-turn; when the hold releases the machine resumes on its own yaw. */
+    greetKickClock(dt);
+    greetFaceClock(dt);
+    var greetD36 = greetPostDist();
+    greetResetCheck(greetD36);
+    var nowEff36 = (greetD36 < GREET_DIST) && greetRiding();
+    greetMaybeFire(greetD36, greetPrevEff, nowEff36, now);
+    greetPrevEff = nowEff36;
+
     if (mixer) mixer.update(dt);
   }
   requestAnimationFrame(tick);
@@ -350,6 +478,9 @@
         visible: !!(ready && grp && dz > NEAR_REAR && dz < SKIP_DIST),
         lanternLit: !!(pip && halo && halo.material.opacity > 0),
         lanternBone: lanternBone,
+        playerDist: greetPlayerDist === -1 ? -1 : +greetPlayerDist.toFixed(1),
+        greetN: greetN,
+        lastGreet: greetN > 0 ? +greetLast.toFixed(2) : -1,
         local: lz,
         world: wp,
         yaw: grp ? +grp.rotation.y.toFixed(3) : 0,
