@@ -168,6 +168,15 @@
     }
     return false;
   }
+  /* W37 (39d): the station greets on SUSTAINED motion now — bridge latch
+     (speed>8 held 1.2s) folded INTO the effective edge (see swap below), never
+     a post-edge veto. Legacy bridge without the latch: keep the w36 shape. */
+  function greetReady() {
+    if (W.HogGreet && typeof W.HogGreet.isGreetReady === 'function') {
+      try { return !!W.HogGreet.isGreetReady(); } catch (e) { return greetRiding() && greetRolling(); }
+    }
+    return greetRiding() && greetRolling();
+  }
   function greetRolling() {
     if (W.HogGreet && typeof W.HogGreet.isRolling === 'function') {
       try { return !!W.HogGreet.isRolling(); } catch (e) { return false; }
@@ -525,9 +534,9 @@
     /* rolling is part of the EFFECTIVE state (judge fix, run-4 lesson): the
        station sits on the spawn, so a bare tracking&&riding edge fires at 0 KPH
        and an in-function rolling veto would EAT that one-shot edge (greet never
-       fires). Folding isRolling() in keeps the edge ARMED until actual motion —
-       the greet then fires on the roll-past edge, toast never over the tutorial. */
-    var nowEff36 = tracking && greetRiding() && greetRolling();
+       fires). W37 (39d): greetReady() = riding + speed>8 HELD 1.2s (bridge
+       latch) — same fold-in shape, the edge just arms later and stays armed. */
+    var nowEff36 = tracking && greetReady();
     greetMaybeFire(greetD36, greetPrevEff, nowEff36, now);
     greetPrevEff = nowEff36;
     greetKickClock(dt);

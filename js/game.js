@@ -3710,12 +3710,14 @@
     return t;
   }
 
-  function arooPop(cls) {
+  /* W37 (39b): optional position args — greet pops arc deterministically from
+     the bridge; every other call site stays random (byte-untouched behavior). */
+  function arooPop(cls, leftPct, topPct) {
     var s = document.createElement('span');
     s.className = cls ? 'aropop ' + cls : 'aropop';
     s.textContent = pick(['AROOOO', 'AROOOOO', 'HELL YEAH BROTHER', 'AROOGA', 'CRANK IT MFER', 'AROOOOOO']);
-    s.style.left = (rand(12, 78)) + '%';
-    s.style.top = (rand(30, 70)) + '%';
+    s.style.left = (leftPct == null ? rand(12, 78) : leftPct) + '%';
+    s.style.top = (topPct == null ? rand(30, 70) : topPct) + '%';
     document.getElementById('hud').appendChild(s);
     setTimeout(function () { if (s.parentNode) s.parentNode.removeChild(s); }, 1500);
   }
@@ -4481,15 +4483,18 @@
       } else {
         if (quest.state === 'seek') {
           var b = quest.brother;
-          // recycle brother if player somehow passed him far
-          while (b.userData.z < game.z - 60) b.userData.z = game.z + 150;
+          // W37 (39e): recycle as soon as he falls >2 behind — the old -60 grace let
+          // a passed brother sit unreachable behind a forward-only rider while the
+          // meter lied "0 M TO THE BROTHER". 2u covers one stutter frame at speed.
+          while (b.userData.z < game.z - 2) b.userData.z = game.z + 150;
           b.position.z = b.userData.z;
           b.position.x = roadX(b.userData.z) + 8.6;
           b.userData.mark.position.y = 3.4 + Math.sin(performance.now() * 0.004) * 0.3;
           el.objective.textContent = 'BROTHER IN NEED AHEAD — RIDE TO ' + quest.data.brother;
           el.objective.style.display = 'block';
           var d1 = b.userData.z - game.z;
-          el.destdist.textContent = Math.max(0, Math.round(d1)) + ' M TO THE BROTHER';
+          /* W37 (39e): ceil, never round — 0.4m ahead must read "1 M", not "0 M" */
+          el.destdist.textContent = Math.max(0, Math.ceil(d1)) + ' M TO THE BROTHER';
           el.destdist.style.display = 'block';
           if (d1 < 9 && game.speed < 42) {
             quest.state = 'tow';
@@ -4500,6 +4505,11 @@
             if (voice) voice.event('attach');
           }
         } else if (quest.state === 'tow') {
+          /* W37 (39e): a passed diner must snap forward the frame it falls behind —
+             completion (11u, speed<30) fires BEFORE the pass, so anything behind is
+             unreachable dead time where the meter lied "0 M". 2u covers one stutter
+             frame at speed. */
+          if (quest.destPos - game.z < -2) quest.destPos = game.z + 640;
           if (!quest.dest) {
             quest.destPos = game.z + 640;
             quest.dest = buildDestination(quest.data.destination.name);
@@ -4540,7 +4550,7 @@
           rp[3] = quest.towBike.position.x; rp[4] = 0.8; rp[5] = quest.towBike.position.z + 1.2;
           quest.rope.geometry.attributes.position.needsUpdate = true;
           el.objective.textContent = quest.data.objective;
-          el.destdist.textContent = Math.max(0, Math.round(quest.destPos - game.z)) + ' M TO ' + quest.data.destination.name;
+          el.destdist.textContent = Math.max(0, Math.ceil(quest.destPos - game.z)) + ' M TO ' + quest.data.destination.name;
           if (quest.destPos - game.z < 11 && game.speed < 30) completeQuest();
         }
       }
@@ -5409,8 +5419,9 @@
      through this one hook (preferred over duplicating DOM code per resident).
      isRiding() gates ride/overcrank only (hud-up, pb.js visible precedent — never
      title). fire() is the whole on-fire beat: Pack-voice toast (w15 dedupe owns
-     repeats, cap 4 untouched) + arooPop x4 at ~90ms stagger (crankPerfect keeps
-     its 8x hierarchy — the 8x loop below is NOT touched). */
+     repeats, cap 4 untouched) + arooPop x4 in a left-to-right arc at 110ms
+     stagger (crankPerfect keeps its 8x hierarchy — the 8x loop is NOT touched). */
+  var greetRollStart = -1;
   window.HogGreet = {
     isRiding: function () {
       var hud = document.getElementById('hud');
@@ -5419,11 +5430,26 @@
     /* rolling gate (judge fix): greet waits for actual motion — a 0-KPH greet
        collides with the ride-start tutorial read. >8u/s ~ >29kph on the dial. */
     isRolling: function () { return game.speed > 8; },
+    /* W37 (39d): SUSTAINED-motion gate — speed>8 must HOLD 1.2s before a greet
+       is allowed. Latch resets the instant speed drops, so a stall never fires a
+       stale greet. Residents fold this INTO their effective edge (never a
+       post-edge veto — run-4 lesson: a veto after the one-shot eats the edge). */
+    isGreetReady: function () {
+      var nowS = performance.now() / 1000;
+      if (game.speed > 8) { if (greetRollStart < 0) greetRollStart = nowS; }
+      else greetRollStart = -1;
+      return greetRollStart >= 0 && (nowS - greetRollStart) >= 1.2 && this.isRiding();
+    },
     fire: function (label, line) {
       toast(label, line);
       /* greet pops are the RED greetpop variant — bare .aropop stays the amber
-         crank voice (shared call sites 3770/3788/3800/4180 untouched) */
-      for (var gi = 0; gi < 4; gi++) setTimeout(function () { arooPop('greetpop'); }, gi * 90);
+         crank voice (shared call sites 3770/3788/3800/4180 untouched).
+         W37 (39b): deterministic ARC (20/38/56/74% left, tops 56/43/43/56) so
+         four pops read as one AROOO wave instead of colliding top-center. */
+      var gx = [20, 38, 56, 74], gy = [56, 43, 43, 56];
+      for (var gi = 0; gi < 4; gi++) (function (i) {
+        setTimeout(function () { arooPop('greetpop', gx[i], gy[i]); }, i * 110);
+      })(gi);
       return true;
     }
   };

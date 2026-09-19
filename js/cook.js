@@ -174,6 +174,16 @@
     }
     return false;
   }
+  /* W37 (39d): effective edge now waits for SUSTAINED motion — bridge latch
+     (speed>8 held 1.2s). Folded INTO nowEff below, never a post-edge veto
+     (run-4 lesson: a veto after the one-shot edge eats the edge forever).
+     Legacy bridge without the latch: fall back to the bare riding gate. */
+  function greetReady() {
+    if (W.HogGreet && typeof W.HogGreet.isGreetReady === 'function') {
+      try { return !!W.HogGreet.isGreetReady(); } catch (e) { return greetRiding(); }
+    }
+    return greetRiding();
+  }
   function greetResetCheck(d) {
     var ad = d < 0 ? -d : d;
     if (ad > GREET_RESET) { greetDone = false; return; }
@@ -197,11 +207,70 @@
       greetEmber.scale.set(greetEmberBaseX * 1.8, greetEmberBaseY * 1.8, 1);
       greetKickT = 1.6;
     }
+    sparkBurst();   /* W37 (39c): the flare now THROWS sparks, not just swells */
   }
   function greetKickClock(dt) {
     if (greetKickT > 0) {
       greetKickT -= dt;
       if (greetKickT <= 0 && greetEmber) greetEmber.scale.set(greetEmberBaseX, greetEmberBaseY, 1);
+    }
+  }
+  /* W37 (39c): one-shot spark BURST on greet — 10 pooled additive sprites (house
+     soft-dot texture, warm ember RGB) blown up/out from the skillet ember.
+     Pool built once at first fire, zero per-frame allocation, 0.85s life inside
+     the 1.6s kick window. Rig verifies in MOTION: sparks>0 in the burst window,
+     0 after (trap 36c — never judge embers from stills). */
+  var SPARK_N = 10, SPARK_LIFE = 0.85;
+  var sparkPool = null, sparkT = -1;
+  function sparkBurst() {
+    if (!W.HogDebug || !W.HogDebug.scene) return;
+    if (!sparkPool) {
+      sparkPool = [];
+      for (var i = 0; i < SPARK_N; i++) {
+        var m = new THREE.SpriteMaterial({
+          map: haloTexture(), transparent: true, opacity: 1,
+          blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        m.color.setRGB(1.0, 0.62, 0.22);
+        var sp = new THREE.Sprite(m);
+        sp.scale.setScalar(0.3);
+        sp.visible = false;
+        W.HogDebug.scene.add(sp);
+        sparkPool.push({ s: sp, vx: 0, vy: 0, vz: 0 });
+      }
+    }
+    if (!greetEmber) { sparkT = -1; return; }
+    var wp = new THREE.Vector3();
+    greetEmber.getWorldPosition(wp);
+    for (var j = 0; j < SPARK_N; j++) {
+      var p = sparkPool[j];
+      var a = (j / SPARK_N) * Math.PI * 2 + rand(-0.35, 0.35);
+      var r = rand(1.2, 2.6);
+      p.vx = Math.cos(a) * r; p.vz = Math.sin(a) * r; p.vy = rand(2.4, 4.6);
+      p.s.position.set(wp.x, wp.y + 0.2, wp.z);
+      p.s.scale.setScalar(rand(0.22, 0.46));
+      p.s.material.opacity = 1;
+      p.s.visible = true;
+    }
+    sparkT = 0;
+  }
+  function sparkClock(dt) {
+    if (sparkT < 0 || !sparkPool) return;
+    sparkT += dt;
+    var k = sparkT / SPARK_LIFE;
+    if (k >= 1) {
+      for (var i = 0; i < SPARK_N; i++) sparkPool[i].s.visible = false;
+      sparkT = -1;
+      return;
+    }
+    var fade = 1 - k * k;
+    for (var j = 0; j < SPARK_N; j++) {
+      var p = sparkPool[j];
+      p.vy -= 3.2 * dt;
+      p.s.position.x += p.vx * dt;
+      p.s.position.y += p.vy * dt;
+      p.s.position.z += p.vz * dt;
+      p.s.material.opacity = fade;
     }
   }
   function greetMaybeFire(d, wasEff, nowEff, nowMs) {
@@ -625,6 +694,8 @@
     if (pauseov && pauseov.style.display === 'flex') { prevT = now; return; }
     var dt = prevT ? Math.min((now - prevT) / 1000, 0.05) : 0.016;
     prevT = now;
+    sparkClock(dt);   /* W37: advances even when the fog gate freezes the cook —
+                         a mid-burst pass-by must still die out, not freeze lit */
 
     /* distance gate vs the camera: fog owns him past SKIP_DIST — freeze everything.
        dist is SIGNED (dinerZ - camZ): riding north fires the freeze via the
@@ -647,7 +718,7 @@
     greetKickClock(dt);
     var greetD36 = (playerDist === -1) ? 1e9 : playerDist;
     greetResetCheck(greetD36);
-    var nowEff36 = tracking && greetRiding();
+    var nowEff36 = tracking && greetReady();
     greetMaybeFire(greetD36, wasEff36, nowEff36, now);
     greetPrevEff = nowEff36;
 
@@ -697,7 +768,8 @@
         bone: propBone,
         apronOn: !!apronBone,
         greetN: greetN,
-        lastGreet: greetN > 0 ? +greetLast.toFixed(2) : -1
+        lastGreet: greetN > 0 ? +greetLast.toFixed(2) : -1,
+        sparks: sparkT >= 0 ? SPARK_N : 0
       };
     },
     /* rig-only deterministic handles (forcePace / faceNow / setYaw precedent) */

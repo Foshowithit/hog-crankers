@@ -115,6 +115,15 @@
     }
     return false;
   }
+  /* W37 (39d): greet waits for SUSTAINED motion — bridge latch (speed>8 held
+     1.2s) folded INTO the effective edge below, never a post-edge veto (run-4
+     lesson). Legacy bridge without the latch: fall back to the bare gate. */
+  function greetReady() {
+    if (W.HogGreet && typeof W.HogGreet.isGreetReady === 'function') {
+      try { return !!W.HogGreet.isGreetReady(); } catch (e) { return greetRiding(); }
+    }
+    return greetRiding();
+  }
   function greetNorm(a) { return Math.atan2(Math.sin(a), Math.cos(a)); }
   function greetPostDist() {
     /* post world pos through the set yaw (placeXing curve-yaw receipt) */
@@ -450,7 +459,7 @@
     greetFaceClock(dt);
     var greetD36 = greetPostDist();
     greetResetCheck(greetD36);
-    var nowEff36 = (greetD36 < GREET_DIST) && greetRiding();
+    var nowEff36 = (greetD36 < GREET_DIST) && greetReady();
     greetMaybeFire(greetD36, greetPrevEff, nowEff36, now);
     greetPrevEff = nowEff36;
 
