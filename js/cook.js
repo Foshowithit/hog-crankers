@@ -419,6 +419,23 @@
        45mm behind the skirt face (+0.12), with air between skirt cloth and band, so the waist
        breaks bib -> fold -> skirt -> SHADOW -> band (attempt-3 trap: face +0.065 sat only ~5mm
        behind the skirt and the tie face overlapped the waist read, so it read unbroken at 6u) */
+    /* W35 BIB COLUMN CLEAN (cook blotch kill): the STEP-1 probe (art/w35/PROBE.md)
+       raycast-verified the lower-bib-center blue-gray blotch as GLB-OWNED — base
+       watchman painted-tie chest standing up to Spine-local Z 0.181 INSIDE the bib
+       rect (X -0.085..+0.111, Y -0.098..+0.055), occluding the stack from the
+       front-6u camera (GLB first at d 5.92, placket 5.938, bib 5.962; poke max
+       23mm proud of the placket face, 48mm proud of the bib face — a chest bulge
+       THROUGH the bib plane, not a hem peek). Cover-only (no tie move:
+       shared-GLB paint): one FIELD-tone box, cookApronPatch35, 0.28x0.24x0.02 at
+       (0,-0.01,0.195), face 0.205 — 24mm clear of the poke max with >=29mm
+       lateral and >=32mm vertical overlap past the poke extremes, so the tie
+       column lands behind cloth with real clearance (no 5mm near-miss). Field
+       tone (same mat as the bib): tones stay 2, reads as workwear cloth.
+       EXPECT_APRON 9 -> 10. Nothing else moves (seam gain 0.54, welt/placket
+       geometry, waiver all untouched). */
+    var patch35 = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.24, 0.02), mat);
+    patch35.name = 'cookApronPatch35';
+    patch35.position.set(0, -0.01, 0.195);
     /* bonus (spec: include if cheap and clean): two thin straps crossing on the
        back panel — the "cook, from behind" signature */
     var strapL = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.48, 0.02), mat);
@@ -431,6 +448,7 @@
     strapR.rotation.z = -0.7;
     spine.add(bib); spine.add(placket); spine.add(weltL); spine.add(weltR);
     spine.add(waistWelt); spine.add(back); spine.add(tie); spine.add(strapL); spine.add(strapR);
+    spine.add(patch35);
   }
 
   try {
