@@ -267,6 +267,20 @@
     #arooline{font-size:12px;}
     body:not(.hog-touch) #combo{right:14px;bottom:90px;font-size:30px;}
   }
+  /* W40 (punch-43b): short touch screens (landscape phones ~390px tall) —
+     bottom-anchor the toast stack ABOVE the CRANK button instead of
+     top-anchoring it. The CRANK disc is 140px tall at bottom:18px, so its top
+     edge sits 158px from the viewport bottom; bottom:170px leaves 12px clear.
+     Overflow now grows UP toward the mission card instead of DOWN under the
+     CRANK thumb button (s5 DRAFT-toast-under-CRANK). Common case is unchanged:
+     1 toast sits top ~160-172px vs ~150px before; 2 clear both card and crank.
+     Scoped to max-height:520px + .hog-touch ONLY — tall tablets / portrait
+     phones never overlapped (stack bottom 390 < crank top 686 at H=844), and
+     desktop small-windows (top:50px rule above) is untouched. Zero JS, zero
+     new assets/lights, zero draw-call change — one stacking rule. */
+  @media (max-height:520px){
+    body.hog-touch #toasts{top:auto;bottom:calc(170px + env(safe-area-inset-bottom));}
+  }
   /* WAVE 12 judge fix: short landscape (phone 844x390) centered the title stack and
      beheaded the logo ~42px off the top — pin to top and compact the stack so the
      whole menu fits inside 390px with the logo fully on-screen */
@@ -362,30 +376,30 @@
 <script src="three.min.js"></script>
 <script src="js/GLTFLoader.js"></script>
 <!-- WAVE 5 NIGHT ENGINE: r128 post-processing, vendored locally (non-module THREE.* globals) -->
-<script src="js/post/shaders/CopyShader.js?v=20260921a"></script>
-<script src="js/post/shaders/LuminosityHighPassShader.js?v=20260921a"></script>
-<script src="js/post/shaders/GammaCorrectionShader.js?v=20260921a"></script>
-<script src="js/post/shaders/FXAAShader.js?v=20260921a"></script>
-<script src="js/post/postprocessing/EffectComposer.js?v=20260921a"></script>
-<script src="js/post/postprocessing/RenderPass.js?v=20260921a"></script>
-<script src="js/post/postprocessing/ShaderPass.js?v=20260921a"></script>
-<script src="js/post/postprocessing/MaskPass.js?v=20260921a"></script>
-<script src="js/post/postprocessing/UnrealBloomPass.js?v=20260921a"></script>
-<script src="js/audio.js?v=20260921a"></script>
-<script src="js/visuals.js?v=20260921a"></script>
-<script src="js/quests.js?v=20260921a"></script>
-<script src="js/voice.js?v=20260921a"></script>
-<script src="js/voicepack.js?v=20260921a"></script>
-<script src="js/music.js?v=20260921a"></script>
-<script src="js/stormaudio.js?v=20260921a"></script>
-<script src="js/game.js?v=20260921a"></script>
+<script src="js/post/shaders/CopyShader.js?v=20260921b"></script>
+<script src="js/post/shaders/LuminosityHighPassShader.js?v=20260921b"></script>
+<script src="js/post/shaders/GammaCorrectionShader.js?v=20260921b"></script>
+<script src="js/post/shaders/FXAAShader.js?v=20260921b"></script>
+<script src="js/post/postprocessing/EffectComposer.js?v=20260921b"></script>
+<script src="js/post/postprocessing/RenderPass.js?v=20260921b"></script>
+<script src="js/post/postprocessing/ShaderPass.js?v=20260921b"></script>
+<script src="js/post/postprocessing/MaskPass.js?v=20260921b"></script>
+<script src="js/post/postprocessing/UnrealBloomPass.js?v=20260921b"></script>
+<script src="js/audio.js?v=20260921b"></script>
+<script src="js/visuals.js?v=20260921b"></script>
+<script src="js/quests.js?v=20260921b"></script>
+<script src="js/voice.js?v=20260921b"></script>
+<script src="js/voicepack.js?v=20260921b"></script>
+<script src="js/music.js?v=20260921b"></script>
+<script src="js/stormaudio.js?v=20260921b"></script>
+<script src="js/game.js?v=20260921b"></script>
 <script src="js/watchman.js"></script>
 <script src="js/loiterer.js"></script>
 <script src="js/cook.js"></script>
 <script src="js/roadglow.js"></script>
-<script src="js/touch.js?v=20260921a"></script>
-<script src="js/fauna.js?v=20260921a"></script>
-<script src="js/couch.js?v=20260921a"></script>
-<script src="js/pb.js?v=20260921a"></script>
+<script src="js/touch.js?v=20260921b"></script>
+<script src="js/fauna.js?v=20260921b"></script>
+<script src="js/couch.js?v=20260921b"></script>
+<script src="js/pb.js?v=20260921b"></script>
 </body>
 </html>

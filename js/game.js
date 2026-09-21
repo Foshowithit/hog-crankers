@@ -5481,8 +5481,13 @@
       /* greet pops are the RED greetpop variant — bare .aropop stays the amber
          crank voice (shared call sites 3770/3788/3800/4180 untouched).
          W37 (39b): deterministic ARC (20/38/56/74% left, tops 56/43/43/56) so
-         four pops read as one AROOO wave instead of colliding top-center. */
-      var gx = [20, 38, 56, 74], gy = [56, 43, 43, 56];
+         four pops read as one AROOO wave instead of colliding top-center.
+         W40 (punch-40): top spans 43->46 — measured on w37 s3/s5 stills, the
+         skull-fire core sits x 34-55% / y 22-52% with flame tips to y~30%,
+         so gy 38 would climb INTO the flames; gy 46 drops the full-opacity
+         phase into the dark under-skirt pocket (96%/92% dark, 0/37 poor-px
+         vs 68/37 at gy 43). Arc stays 10pts tall, stagger 110ms untouched. */
+      var gx = [20, 38, 56, 74], gy = [56, 46, 46, 56];
       for (var gi = 0; gi < 4; gi++) (function (i) {
         setTimeout(function () { arooPop('greetpop', gx[i], gy[i]); }, i * 110);
       })(gi);
