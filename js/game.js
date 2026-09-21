@@ -853,12 +853,22 @@
     var pad = new THREE.Mesh(new THREE.BoxGeometry(26, 0.2, 20), new THREE.MeshLambertMaterial({ color: 0xffffff, map: padTex }));
     pad.position.y = 0.1;
     gasStation.add(pad);
-    var canopy = new THREE.Mesh(new THREE.BoxGeometry(24, 1.2, 16), new THREE.MeshLambertMaterial({ color: 0x7e2510 }));
+    /* WAVE 39 canopy night-grade (bible rule 1: structures dark silhouette, only
+       deliberate emissives glow): canopy wears a material array — top/fascia keep
+       the brand red 0x7e2510, the UNDERSIDE face (Box index 3, normal -Y) gets a
+       dark matte 0x1a1210 so the soffit stops reading as a lit ceiling. */
+    var canopyTopMat = new THREE.MeshLambertMaterial({ color: 0x7e2510 });
+    var canopySoffitMat = new THREE.MeshLambertMaterial({ color: 0x1a1210 });
+    var canopy = new THREE.Mesh(
+      new THREE.BoxGeometry(24, 1.2, 16),
+      [canopyTopMat, canopyTopMat, canopyTopMat, canopySoffitMat, canopyTopMat, canopyTopMat]
+    );
     canopy.position.y = 7;
     gasStation.add(canopy);
     for (var px = -9; px <= 9; px += 6) {
       for (var pz = -5.5; pz <= 5.5; pz += 11) {
-        var pil = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 6.4, 6), new THREE.MeshLambertMaterial({ color: 0x6e6a5e }));
+        /* WAVE 39: 0x6e6a5e -> 0x3a342c silhouette tone. Same Lambert, no emissive. */
+        var pil = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 6.4, 6), new THREE.MeshLambertMaterial({ color: 0x3a342c }));
         pil.position.set(px, 3.2, pz);
         gasStation.add(pil);
       }
@@ -898,19 +908,45 @@
     );
     sign.position.set(0, 13, 11);
     gasStation.add(sign);
-    /* neon: unlit sign + canopy light strip + one warm point light = night beacon.
-       Strip stays sub-threshold (no HDR): a 21x13 HDR surface at spawn range floods
+    /* neon: unlit sign + pump-lane light strips + one warm point light = night beacon.
+       Strips stay sub-threshold (no HDR): a 21x13 HDR surface at spawn range floods
        the bloom mip chain and whites out the whole first view. The muse sign face
        is the blooming beacon. */
-    var stripMat = new THREE.MeshBasicMaterial({ color: 0xffb36b });
-    var strip = new THREE.Mesh(new THREE.BoxGeometry(21, 0.14, 13), stripMat);
-    strip.position.y = 6.32;
-    gasStation.add(strip);
-    var glow = new THREE.PointLight(0xffa050, 0.6, 52);   /* WAVE 5: warm night pool — 1.5/66 blew out the spawn view.
+    /* WAVE 39: the full-slab 21x13 0xffb36b Basic strip is DEAD — it fullbright-lit
+       the whole soffit (kill-list wash). Two narrow pump-lane strips (~4x0.1x2 over
+       each pump at y~5.9) use sub-bloom doctrine (warm, NOT fullbright peach) so the
+       light pools on the pumps, not the ceiling. No ceiling-sized Basic plane remains. */
+    var laneMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+    laneMat.color.setRGB(0.38, 0.13, 0.026);
+    var lane1 = new THREE.Mesh(new THREE.BoxGeometry(4, 0.1, 2), laneMat);
+    lane1.position.set(-3, 5.9, 0);
+    gasStation.add(lane1);
+    var lane2 = new THREE.Mesh(new THREE.BoxGeometry(4, 0.1, 2), laneMat);
+    lane2.position.set(3, 5.9, 0);
+    gasStation.add(lane2);
+    /* Thin fascia edge trim, sub-bloom only (shares laneMat — below the bloom
+       line). Four perimeter strips proud of the fascia faces, NOT a slab. */
+    var trimFB = new THREE.BoxGeometry(24.2, 0.12, 0.18);
+    var trimLR = new THREE.BoxGeometry(0.18, 0.12, 16.2);
+    var trimF = new THREE.Mesh(trimFB, laneMat);
+    trimF.position.set(0, 6.46, 8.02);
+    gasStation.add(trimF);
+    var trimB = new THREE.Mesh(trimFB, laneMat);
+    trimB.position.set(0, 6.46, -8.02);
+    gasStation.add(trimB);
+    var trimL = new THREE.Mesh(trimLR, laneMat);
+    trimL.position.set(-12.02, 6.46, 0);
+    gasStation.add(trimL);
+    var trimR = new THREE.Mesh(trimLR, laneMat);
+    trimR.position.set(12.02, 6.46, 0);
+    gasStation.add(trimR);
+    var glow = new THREE.PointLight(0xffa050, 0.45, 28);   /* WAVE 5: warm night pool — 1.5/66 blew out the spawn view.
                                                              WAVE 12 judge fix: 0.9 @ y6 lit the canopy UNDERSIDE
                                                              into a beige ceiling (kill-list wash on the title
-                                                             flyby) — lower + dimmer keeps the pool, kills the glare */
-    glow.position.set(0, 4.4, 0);
+                                                             flyby) — lower + dimmer keeps the pool, kills the glare
+                                                             WAVE 39 retune: 0.6/52 @ y4.4 -> 0.45/28 @ y3.0 so it
+                                                             pools on the pumps/forecourt, not the soffit */
+    glow.position.set(0, 3.0, 0);
     gasStation.add(glow);
   })();
   scene.add(gasStation);
