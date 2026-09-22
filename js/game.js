@@ -897,9 +897,16 @@
     gasStation.add(signPost);
     /* face: muse-forged neon art over the canvas fallback (swap-in on load) */
     var signMat = new THREE.MeshBasicMaterial({ map: signTexture('DED HOG', 'GAS-N-GO', {}) });
+    /* WAVE 42 STATION-SIGN BEACON: warm backlit push so the face reads from the
+       road at night. MeshBasic is unlit (it IS the backlight) — the color
+       multiplier is the dimmer: warm, sub-blowout (neon strokes kiss the 0.72
+       bloom line, never flood it). Re-asserted in the swap-in callback so the
+       fix survives whichever texture wins (canvas fallback AND photo). */
+    signMat.color.setRGB(1.7, 1.25, 0.95);
     new THREE.TextureLoader().load('assets/dedhog-sign.jpg', function (t) {
       t.anisotropy = renderer.capabilities.getMaxAnisotropy();
       signMat.map = srgb(t);
+      signMat.color.setRGB(1.7, 1.25, 0.95);
       signMat.needsUpdate = true;
     });
     var sign = new THREE.Mesh(
@@ -908,6 +915,15 @@
     );
     sign.position.set(0, 13, 11);
     gasStation.add(sign);
+    /* WAVE 42: pooled sign wash — one small warm PointLight hung just off the
+       south face (0,13,12.6), distance 6. It pools on the sign post + face
+       surround and dies before the canopy: nearest soffit point sits ~8.0
+       units away, past the cutoff, so the w39 dark soffit never re-brightens.
+       The Basic face itself ignores light (its backlight IS the color push
+       above); this wash sells the beacon on the Lambert post. */
+    var signWash = new THREE.PointLight(0xffb36b, 0.55, 6);
+    signWash.position.set(0, 13, 12.6);
+    gasStation.add(signWash);
     /* neon: unlit sign + pump-lane light strips + one warm point light = night beacon.
        Strips stay sub-threshold (no HDR): a 21x13 HDR surface at spawn range floods
        the bloom mip chain and whites out the whole first view. The muse sign face
