@@ -280,6 +280,31 @@
      new assets/lights, zero draw-call change — one stacking rule. */
   @media (max-height:520px){
     body.hog-touch #toasts{top:auto;bottom:calc(170px + env(safe-area-inset-bottom));}
+    /* W41 (punch-43b follow-through): the bottom-anchored stack grows UP into the
+       three .tmini pills, so the PILLS re-dock — not the toasts (the toast
+       corridor, right edge above CRANK, is load-bearing from w40). The 136-dock
+       FAILED: comboForced slot x10.32/y90/b160/r356.48 overlaps all three
+       136-docked pills (y136..180) by 24px (overlap=true day=-24 x3), and the
+       live "MAXIMUM CRANK x2 / CHAIN OF BROTHERHOOD" combo text crosses the
+       pill row — so the combo slot bottom (b160) is the binding constraint,
+       not the card. Re-dock the row to left:142px/top:168px (pills y168..212).
+       Measured clearances at T=168 (844x390 forcetouch, exact bounds):
+         combo slot b160 -> pills top 168 ......... 8px below (BINDING)
+         worst card allvis b122.78 / live b120.39 -> ~45px below
+         meterwrap y264 -> 52px above (pills bottom 212)
+         speedbox r110.66 vs pills x142 -> 31px x-gap
+         toast stack x592+ / crank x688+ -> x-clear
+         steer pads y276 -> 64px above
+       Minimal move with margin — do NOT go lower (176+ drifts from thumb
+       reach for zero gain). Pills stay 54x44, keep their right-to-left order
+       via explicit lefts so no JS or DOM order change is needed. right:auto
+       cancels the touch.js right anchors on this tier only — tall tablets /
+       portrait / desktop rules untouched. Zero JS, zero assets/lights, zero
+       draw-call change — one docking rule. */
+    body.hog-touch .tmini{top:calc(168px + env(safe-area-inset-top));bottom:auto;right:auto;}
+    body.hog-touch #tpause{left:calc(142px + env(safe-area-inset-left));}
+    body.hog-touch #tcam{left:calc(202px + env(safe-area-inset-left));}
+    body.hog-touch #tmute{left:calc(262px + env(safe-area-inset-left));}
   }
   /* WAVE 12 judge fix: short landscape (phone 844x390) centered the title stack and
      beheaded the logo ~42px off the top — pin to top and compact the stack so the
@@ -376,30 +401,30 @@
 <script src="three.min.js"></script>
 <script src="js/GLTFLoader.js"></script>
 <!-- WAVE 5 NIGHT ENGINE: r128 post-processing, vendored locally (non-module THREE.* globals) -->
-<script src="js/post/shaders/CopyShader.js?v=20260921b"></script>
-<script src="js/post/shaders/LuminosityHighPassShader.js?v=20260921b"></script>
-<script src="js/post/shaders/GammaCorrectionShader.js?v=20260921b"></script>
-<script src="js/post/shaders/FXAAShader.js?v=20260921b"></script>
-<script src="js/post/postprocessing/EffectComposer.js?v=20260921b"></script>
-<script src="js/post/postprocessing/RenderPass.js?v=20260921b"></script>
-<script src="js/post/postprocessing/ShaderPass.js?v=20260921b"></script>
-<script src="js/post/postprocessing/MaskPass.js?v=20260921b"></script>
-<script src="js/post/postprocessing/UnrealBloomPass.js?v=20260921b"></script>
-<script src="js/audio.js?v=20260921b"></script>
-<script src="js/visuals.js?v=20260921b"></script>
-<script src="js/quests.js?v=20260921b"></script>
-<script src="js/voice.js?v=20260921b"></script>
-<script src="js/voicepack.js?v=20260921b"></script>
-<script src="js/music.js?v=20260921b"></script>
-<script src="js/stormaudio.js?v=20260921b"></script>
-<script src="js/game.js?v=20260921b"></script>
+<script src="js/post/shaders/CopyShader.js?v=20260921c"></script>
+<script src="js/post/shaders/LuminosityHighPassShader.js?v=20260921c"></script>
+<script src="js/post/shaders/GammaCorrectionShader.js?v=20260921c"></script>
+<script src="js/post/shaders/FXAAShader.js?v=20260921c"></script>
+<script src="js/post/postprocessing/EffectComposer.js?v=20260921c"></script>
+<script src="js/post/postprocessing/RenderPass.js?v=20260921c"></script>
+<script src="js/post/postprocessing/ShaderPass.js?v=20260921c"></script>
+<script src="js/post/postprocessing/MaskPass.js?v=20260921c"></script>
+<script src="js/post/postprocessing/UnrealBloomPass.js?v=20260921c"></script>
+<script src="js/audio.js?v=20260921c"></script>
+<script src="js/visuals.js?v=20260921c"></script>
+<script src="js/quests.js?v=20260921c"></script>
+<script src="js/voice.js?v=20260921c"></script>
+<script src="js/voicepack.js?v=20260921c"></script>
+<script src="js/music.js?v=20260921c"></script>
+<script src="js/stormaudio.js?v=20260921c"></script>
+<script src="js/game.js?v=20260921c"></script>
 <script src="js/watchman.js"></script>
 <script src="js/loiterer.js"></script>
 <script src="js/cook.js"></script>
 <script src="js/roadglow.js"></script>
-<script src="js/touch.js?v=20260921b"></script>
-<script src="js/fauna.js?v=20260921b"></script>
-<script src="js/couch.js?v=20260921b"></script>
-<script src="js/pb.js?v=20260921b"></script>
+<script src="js/touch.js?v=20260921c"></script>
+<script src="js/fauna.js?v=20260921c"></script>
+<script src="js/couch.js?v=20260921c"></script>
+<script src="js/pb.js?v=20260921c"></script>
 </body>
 </html>
