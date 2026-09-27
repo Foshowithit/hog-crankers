@@ -71,7 +71,7 @@
      road, corn, ground stay matte) -> GammaCorrection (r128 trap: with EffectComposer the
      renderer's outputEncoding never reaches the final buffer — this pass IS the sRGB write)
      -> FXAA (composer render targets have no MSAA). */
-  var composer = null, bloomPass = null, fxaaPass = null, postOn = false;
+  var composer = null, bloomPass = null, fxaaPass = null, gradePass = null, postOn = false;
   if (!IS_TOUCH && THREE.EffectComposer && THREE.UnrealBloomPass && THREE.GammaCorrectionShader && THREE.FXAAShader) {
     try {
       composer = new THREE.EffectComposer(renderer);
@@ -82,6 +82,14 @@
       composer.addPass(new THREE.ShaderPass(THREE.GammaCorrectionShader));
       fxaaPass = new THREE.ShaderPass(THREE.FXAAShader);
       composer.addPass(fxaaPass);
+      /* WAVE 43 NIGHT CINEMA GRADE: grade rides LAST (after FXAA so grain stays crisp);
+         needs no size uniform (grain uses gl_FragCoord, CA is UV-space). Touch tier gets
+         nothing new — this block is already desktop-gated — and the postOn degrade kill
+         below drops the whole composer (grade included) in one shot. */
+      if (THREE.NightGradeShader && THREE.ShaderPass) {
+        gradePass = new THREE.ShaderPass(THREE.NightGradeShader);
+        composer.addPass(gradePass);
+      }
       postOn = true;
     } catch (err) { composer = null; postOn = false; }
   }
@@ -95,6 +103,9 @@
   }
   if (postOn) setPostSize();
   function renderFrame() {
+    /* WAVE 43: grade grain clock lives at the single render funnel — every mode path
+       (title/ride/pause/rig sync) advances it, so grain animates even on frozen frames */
+    if (gradePass) gradePass.uniforms.uTime.value = performance.now() * 0.001;
     if (postOn && composer) composer.render();
     else renderer.render(scene, camera);
   }
@@ -2206,7 +2217,9 @@
   playerLight.position.set(0, 2.4, 1.2);
   player.add(playerLight);
   scene.add(player);
-  window.HogDebug = { scene: scene, camera: camera, composer: composer, bloom: bloomPass };
+  /* WAVE 43: grade + postOn exposed for the capture rig — postOn is a getter, the
+     auto-degrade kill flips the closure var and the rig must see the live value */
+  window.HogDebug = { scene: scene, camera: camera, composer: composer, bloom: bloomPass, grade: gradePass, postOn: function () { return postOn; } };
   /* WAVE 16 KICKSTAND: rest-state drive, module scope (zero per-frame alloc).
      Rest = the player bike sits parked AND visible: title orbit/flyby (mode 'title',
      always parked at spawn) + any ride state with speed ~0 and nobody working
