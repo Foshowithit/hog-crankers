@@ -168,6 +168,32 @@
   var greetDone = false, greetN = 0, greetLast = -1e9, greetPrevEff = false;
   var greetKickT = 0;          /* skillet-halo 1.6s kick countdown */
   var greetEmber = null, greetEmberBaseX = 0, greetEmberBaseY = 0;
+  /* W44 (38e): always-on ember flicker clock — THE COALS BREATHE. emberT advances
+     in tick() right after sparkClock(dt) (before the fog-distance gate, so the far
+     cook still breathes, same discipline as the W37 spark clock). The flicker owns
+     OPACITY + GREEN-CHANNEL ONLY — greet kick owns SCALE absolutely, never touch it.
+     Freezes under pause/hidden early-returns (clocks never reached): correct by
+     design, documented. Zero per-frame alloc: cached greetEmber handle, Math.sin
+     number math only. Dual incommensurate sines (1.7Hz + 4.3Hz) so the motion never
+     visibly loops; range 0.5 +/- (0.055+0.035) = ~0.41-0.59. */
+  var emberT = 0;
+  function emberClock(dt) {
+    if (!greetEmber) {
+      if (grp) grp.traverse(function (o) {
+        if (!greetEmber && o.name === 'cookSkillet31' && o.children) {
+          for (var i = 0; i < o.children.length; i++) {
+            if (o.children[i] && o.children[i].isSprite) { greetEmber = o.children[i]; break; }
+          }
+        }
+      });
+      if (greetEmber) { greetEmberBaseX = greetEmber.scale.x; greetEmberBaseY = greetEmber.scale.y; }
+    }
+    if (!greetEmber) return;
+    emberT += dt;
+    var t = emberT;
+    greetEmber.material.opacity = 0.5 + 0.055 * Math.sin(2 * Math.PI * 1.7 * t) + 0.035 * Math.sin(2 * Math.PI * 4.3 * t + 1.3);
+    greetEmber.material.color.setRGB(1.0, 0.55 + 0.03 * Math.sin(2 * Math.PI * 1.1 * t + 0.5), 0.2);
+  }
   function greetRiding() {
     if (W.HogGreet && typeof W.HogGreet.isRiding === 'function') {
       try { return !!W.HogGreet.isRiding(); } catch (e) { return false; }
@@ -696,6 +722,10 @@
     prevT = now;
     sparkClock(dt);   /* W37: advances even when the fog gate freezes the cook —
                          a mid-burst pass-by must still die out, not freeze lit */
+    emberClock(dt);   /* W44 (38e): always-on ember flicker — opacity/color ONLY, never
+                         scale (kick owns scale). Before the fog gate, same as sparkClock:
+                         the far cook still breathes. Pause/hidden freeze (early-returns
+                         above): correct by design. */
 
     /* distance gate vs the camera: fog owns him past SKIP_DIST — freeze everything.
        dist is SIGNED (dinerZ - camZ): riding north fires the freeze via the
@@ -769,7 +799,9 @@
         apronOn: !!apronBone,
         greetN: greetN,
         lastGreet: greetN > 0 ? +greetLast.toFixed(2) : -1,
-        sparks: sparkT >= 0 ? SPARK_N : 0
+        sparks: sparkT >= 0 ? SPARK_N : 0,
+        emberOp: greetEmber ? +greetEmber.material.opacity.toFixed(3) : -1,
+        emberSc: greetEmber ? +greetEmber.scale.x.toFixed(2) : -1
       };
     },
     /* rig-only deterministic handles (forcePace / faceNow / setYaw precedent) */
