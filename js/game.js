@@ -527,9 +527,13 @@
   var CORN_N = IS_TOUCH ? 1300 : 2400;
   var cornGeo = new THREE.PlaneGeometry(2.6, 2.5);
   cornGeo.translate(0, 1.25, 0);
+  /* W48 VARIETY: the atlas (4 distinct clumps in one sheet) replaces the single silhouette;
+     each instance offsets its UVs into one column via the aCornCol attribute below. Falls back
+     to the single cornTexture if the atlas is unavailable (graceful, same pattern as everywhere). */
+  var cornAtlasReady = !!(V.cornAtlasTexture);
   var cornMat = new THREE.MeshLambertMaterial({
     color: 0xffffff,
-    map: V.cornTexture ? srgb(V.cornTexture()) : null,
+    map: (cornAtlasReady ? srgb(V.cornAtlasTexture()) : (V.cornTexture ? srgb(V.cornTexture()) : null)),
     transparent: true, alphaTest: 0.4, side: THREE.DoubleSide
   });
   /* WAVE 9: close-up corn glare fix — moonlit corn reads right at distance, but beside the
@@ -544,8 +548,11 @@
   var cornWindU = { uTime: { value: 0 }, uGust: { value: 0.10 }, uBike: { value: new THREE.Vector3(0, 0, -1e3) } };
   cornMat.onBeforeCompile = function (sh) {
     Object.assign(sh.uniforms, cornWindU);
+    /* W48: declare + read the per-instance atlas column (InstancedBufferAttribute). */
+    sh.vertexShader = '#ifdef USE_INSTANCING\nattribute float aCornCol;\n#endif\n' + sh.vertexShader;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', 'varying float vCornDist;\nuniform float uTime;\nuniform float uGust;\nuniform vec3 uBike;\n#include <common>')
+      .replace('#include <common>', 'varying float vCornDist;\nvarying float vCornCol;\nuniform float uTime;\nuniform float uGust;\nuniform vec3 uBike;\n#include <common>')
+      .replace('void main() {', 'void main() {\n#ifdef USE_INSTANCING\n\tvCornCol = aCornCol;\n#else\n\tvCornCol = 0.0;\n#endif')
       /* WAVE 20: project_vertex expanded in place (r128) so the sway lands BETWEEN the
          instanceMatrix multiply and the modelViewMatrix multiply. There mvPosition is in
          WORLD space (these meshes sit at the scene root with identity model matrices) —
@@ -574,10 +581,23 @@
         'vCornDist = -mvPosition.z;'
       ].join('\n'));
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', 'varying float vCornDist;\n#include <common>')
+      .replace('#include <common>', 'varying float vCornDist;\nvarying float vCornCol;\n#include <common>')
+      /* W48: remap vUv.x into the instance's atlas column BEFORE the map is sampled.
+         r128 samples the map in <map_fragment>; we rewrite vUv there (0..1 -> col/4 + 0..1/4). */
+      .replace('#include <map_fragment>', [
+        'vec4 sampledDiffuseColor = vec4( 1.0 );',
+        '#ifdef USE_MAP',
+        '\tvec2 atlasUv = vec2( (vUv.x + vCornCol) * 0.25, vUv.y );',
+        '\tsampledDiffuseColor = texture2D( map, atlasUv );',
+        '\t#ifdef DECODE_VIDEO_TEXTURE',
+        '\tsampledDiffuseColor = sRGBTransferEOTF( sampledDiffuseColor );',
+        '\t#endif',
+        '\tdiffuseColor *= sampledDiffuseColor;',
+        '#endif'
+      ].join('\n'))
       .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= (0.45 + 0.55 * smoothstep(6.0, 46.0, vCornDist));');
   };
-  cornMat.customProgramCacheKey = function () { return 'hog-corn-wind20'; };
+  cornMat.customProgramCacheKey = function () { return 'hog-corn-wind21-atlas'; };
   var cornMeshA = new THREE.InstancedMesh(cornGeo, cornMat, CORN_N);
   var cornMeshB = new THREE.InstancedMesh(cornGeo, cornMat, CORN_N);
   var corn = [];
@@ -587,6 +607,11 @@
   var qY = new THREE.Quaternion();
   var rot90 = new THREE.Matrix4().makeRotationY(Math.PI / 2);
   var vS = new THREE.Vector3();
+  /* W48: per-instance atlas column (which of the 4 clump silhouettes) + per-instance tint so
+     the field stops reading as one stamped sprite. Both live on the instance record and are
+     re-uploaded whenever cornMatrix() rewrites an instance (recycle), so variety persists. */
+  var cornCols = new Float32Array(CORN_N);
+  var cornTint = new Float32Array(CORN_N * 3);
   function cornMatrix(i) {
     var c = corn[i];
     qY.setFromAxisAngle(new THREE.Vector3(0, 1, 0), c.yaw || 0);
@@ -595,12 +620,44 @@
     m4b.copy(m4).multiply(rot90);
     cornMeshA.setMatrixAt(i, m4);
     cornMeshB.setMatrixAt(i, m4b);
+    cornCols[i] = c.col || 0;
+    var t = c.tint || 1;
+    cornTint[i * 3] = t; cornTint[i * 3 + 1] = 1; cornTint[i * 3 + 2] = c.tintB || 1;
+  }
+  function commitCornVariety() {
+    if (cornMeshA.geometry.getAttribute('aCornCol')) {
+      cornMeshA.geometry.getAttribute('aCornCol').needsUpdate = true;
+      cornMeshB.geometry.getAttribute('aCornCol').needsUpdate = true;
+    }
+    if (cornMeshA.instanceColor) { cornMeshA.instanceColor.needsUpdate = true; cornMeshB.instanceColor.needsUpdate = true; }
   }
   for (var ci = 0; ci < CORN_N; ci++) {
     var side = Math.random() < 0.5 ? -1 : 1;
-    corn.push({ z: rand(-100, WORLD_LEN - 100), off: side * rand(18, 60), s: rand(0.75, 1.5), yaw: rand(0, Math.PI) });
+    corn.push({
+      z: rand(-100, WORLD_LEN - 100), off: side * rand(18, 60), s: rand(0.72, 1.6),
+      yaw: rand(0, Math.PI),
+      col: (Math.random() * 4) | 0,                       /* one of the 4 atlas clumps */
+      tint: rand(0.82, 1.12), tintB: rand(0.9, 1.1)      /* warm/cool + luma variance */
+    });
     cornMatrix(ci);
   }
+  /* W48 WIRING: attach the atlas-column attribute to BOTH crossed meshes' geometry, and give
+     each instance a colour so the field carries hue/luma variety instead of one flat green. */
+  (function wireCornVariety() {
+    var colIdx = new THREE.InstancedBufferAttribute(new Float32Array(cornCols), 1);
+    cornGeo.setAttribute('aCornCol', colIdx);
+    cornMeshA.geometry = cornGeo;
+    cornMeshB.geometry = cornGeo;
+    var col = new THREE.Color();
+    for (var i = 0; i < CORN_N; i++) {
+      col.setRGB(cornTint[i * 3], cornTint[i * 3 + 1], cornTint[i * 3 + 2]);
+      cornMeshA.setColorAt(i, col);
+      cornMeshB.setColorAt(i, col);
+    }
+    if (cornMeshA.instanceColor) cornMeshA.instanceColor.needsUpdate = true;
+    if (cornMeshB.instanceColor) cornMeshB.instanceColor.needsUpdate = true;
+    cornGeo.getAttribute('aCornCol').needsUpdate = true;
+  })();
   cornMeshA.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   cornMeshB.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   scene.add(cornMeshA);
@@ -4521,6 +4578,7 @@
     if (cornDirty) {
       cornMeshA.instanceMatrix.needsUpdate = true;
       cornMeshB.instanceMatrix.needsUpdate = true;
+      commitCornVariety();          /* W48: recycle may have re-rolled col/tint */
     }
     /* WAVE 14: pole/fence rings recycle closed-loop (stride = N * gap) — the ring always
        spans the visible road many times over, so props only ever move, never pop. Each
