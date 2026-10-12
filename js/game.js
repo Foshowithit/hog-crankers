@@ -253,6 +253,45 @@
     })
   );
   scene.add(skyDome);
+  /* WAVE 51 GROUND HAZE (a pragmatic art-director read of the blind-test failure: "the
+     mid-to-far band behind the bike is a flat dead near-black void; the single biggest thing
+     killing the sense of speed and place"). A world-space ember haze band that sits between
+     the road and the ridgeline: warm at the horizon, fading to nothing upward and downward,
+     additive + sub-bloom (bible rule 1 — it is atmosphere, never a beacon). It rides the
+     player (position synced with ground), so it always fills the far band with a receding
+     wash instead of a black hole — the cheapest code-only depth cue there is. */
+  var groundHaze = (function () {
+    var W = 256, H = 128;
+    var c = makeCanvas(W, H), g = c.getContext('2d');
+    var grad = g.createLinearGradient(0, 0, 0, H);   /* v=0 top (fades up), v=1 bottom */
+    grad.addColorStop(0.00, 'rgba(120,52,20,0)');
+    grad.addColorStop(0.32, 'rgba(150,66,26,0.16)');
+    grad.addColorStop(0.58, 'rgba(178,84,34,0.40)');   /* warm core riding the horizon */
+    grad.addColorStop(0.80, 'rgba(150,66,26,0.16)');
+    grad.addColorStop(1.00, 'rgba(120,52,20,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, W, H);
+    /* break the band up horizontally so it is not a flat strip: soft vertical striae that
+       read as haze columns / distant light bleed, never hard geometry. */
+    for (var i = 0; i < 90; i++) {
+      var hx = Math.random() * W, hw = 1 + Math.random() * 6;
+      var t = Math.random();
+      g.fillStyle = t < 0.6 ? 'rgba(190,96,40,0.05)' : 'rgba(90,40,18,0.06)';
+      g.fillRect(hx, 18 + Math.random() * (H - 60), hw, 40 + Math.random() * 60);
+    }
+    var tex = srgb(new THREE.CanvasTexture(c));
+    tex.wrapS = THREE.RepeatWrapping; tex.repeat.set(3, 1);
+    var mat = new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, opacity: 0.8, fog: false,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    });
+    var geo = new THREE.PlaneGeometry(700, 58);
+    var m = new THREE.Mesh(geo, mat);
+    m.position.set(0, 9, 300);            /* out past the road end, straddling the horizon */
+    m.renderOrder = 1;                     /* after dome/stars(0), before rain(2) */
+    m.frustumCulled = false;
+    scene.add(m);
+    return m;
+  })();
   var stars = V.starField ? V.starField() : null;
   if (stars) scene.add(stars);
   /* WAVE 5: twinkle — oscillate each star group's opacity in the render loop */
@@ -4914,6 +4953,7 @@
 
     moon.position.set(game.x + 160, 175, game.z + 800);
     ground.position.z = game.z;
+    if (groundHaze) groundHaze.position.z = game.z + 320;
 
     /* WAVE 45 DEFECT 1: the shadow frustum RIDES the player. Without this the 62u
        ortho box would sit at the origin and the ride would walk straight out of
