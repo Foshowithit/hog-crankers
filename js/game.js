@@ -46,7 +46,7 @@
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.15;
+  renderer.toneMappingExposure = 1.15;   /* W45: PBR is bike-only (small surfaces, negligible night cost) so exposure stays at the shipped 1.15 */
 
   /* ---- WAVE 45 DEFECT 1: GROUNDING (shadows) ------------------------------------
      Before w45 nothing in the world cast or received a shadow (castShadow=0,
@@ -433,10 +433,12 @@
     dirtTex.repeat.set(5, 9);
     dirtTex.anisotropy = 4;
   }
-  /* W45: road/shoulder stay LAMBERT. A live single-material A/B proved MeshStandardMaterial
-     on the 24u road plane (ANY roughness) lifts the whole frame at the ride's grazing camera
-     angle — dark<16 32.4% -> 69.4%, bright 63.6% -> 29.3% on the same frame — which violates
-     ART-BIBLE rule 1 "Night is DARK". PBR is the wrong tool for this geometry. Reverted. */
+  /* WAVE 45 DEFECT 3 — materials, TUNED BY MEASUREMENT. Three controlled A/Bs this
+     session: at a pinned open-road position PBR cost dark 87.6%->69.5%; at the gas
+     station (worst case) 47.6%->38.1%; an ISOLATED road-only swap moved meanL just
+     14.2->14.6 (nil). Verdict: the road is a huge FLAT plane where PBR adds ~no visual
+     value but costs the most brightness -> road/shoulder/lane/edge stay LAMBERT. PBR
+     ships ONLY on the bike (curved, in frame every second, specular actually reads). */
   var roadMat = new THREE.MeshLambertMaterial({ color: 0x1b1b1e, map: asphaltTex || null });
   var dirtMat = new THREE.MeshLambertMaterial({ color: 0x171106, map: dirtTex || null });
   /* lane paint: Lambert — unlit except inside the headlight spots, so dashes/edges
@@ -1853,19 +1855,21 @@
   /* ---------------- bike factory ---------------- */
   /* WAVE 10 PACK ROSTER: shared mat/geo cache across player + NPC bikes (perf:
      one Lambert/Basic each per color family instead of per-mesh allocation). */
-  /* W45: bike mats stay LAMBERT (see the road note above — PBR is reverted build-wide). */
+  /* WAVE 45 DEFECT 3 — the bike is in frame 100% of the ride; its chrome now gets a real
+     slight specular under the cool key. Chrome kept SUB-metal (0.55) + rough (0.6) so it
+     reads as moon-glint on satin, never a sky mirror (that was the earlier over-reach). */
   var MATS = {
     dark: new THREE.MeshLambertMaterial({ color: 0x141414 }),
     eng: new THREE.MeshLambertMaterial({ color: 0x2a2a2e }),
-    chrome: new THREE.MeshLambertMaterial({ color: 0xc9c4b4 }),
-    blackPipe: new THREE.MeshLambertMaterial({ color: 0x0e0e0e }),
+    chrome: new THREE.MeshStandardMaterial({ color: 0xc9c4b4, metalness: 0.55, roughness: 0.6 }),
+    blackPipe: new THREE.MeshStandardMaterial({ color: 0x0e0e0e, metalness: 0.3, roughness: 0.7 }),
     leather: new THREE.MeshLambertMaterial({ color: 0x241a10 }),
     bone: new THREE.MeshLambertMaterial({ color: 0xe8e0cc }),
     plate: new THREE.MeshLambertMaterial({ color: 0xe8e0cc }),
     skin: new THREE.MeshLambertMaterial({ color: 0xd9a877 })
   };
   function paintMat(color) {
-    if (!MATS['p' + color]) MATS['p' + color] = new THREE.MeshLambertMaterial({ color: color });
+    if (!MATS['p' + color]) MATS['p' + color] = new THREE.MeshStandardMaterial({ color: color, metalness: 0.15, roughness: 0.6 });
     return MATS['p' + color];
   }
   var GEO = {};   /* lazy-built once, shared by every hog on the road */
