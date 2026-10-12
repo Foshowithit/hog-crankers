@@ -48,23 +48,62 @@
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.15;
 
+  /* ---- WAVE 45 DEFECT 1: GROUNDING (shadows) ------------------------------------
+     Before w45 nothing in the world cast or received a shadow (castShadow=0,
+     receiveShadow=0), so every prop, bike and rider floated. This is the single
+     loudest "looks cheap" tell and the one capability the UE5 reference has that
+     we lacked outright. one shadow map, desktop-only; touch tier is byte-identical
+     to shipped. The warm `dir` key (already pointed down-forward at 60,120,-80)
+     becomes the caster; its ortho frustum RIDES the player each frame (60u bubble)
+     so a 1024 map stays sharp over a world that never ends. */
+  var SHADOWS_ON = !IS_TOUCH;
+  if (SHADOWS_ON) {
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.autoUpdate = true;
+  }
+
   var V = window.HogVisuals || {};
 
   var scene = new THREE.Scene();
   scene.background = new THREE.Color(0x120a08);
-  scene.fog = new THREE.FogExp2(0x1c0e08, 0.0033);   /* ember dusk — melts ridges into the horizon band */
+  scene.fog = new THREE.FogExp2(0x1a1010, 0.0033);   /* WAVE 45: ember dusk, de-baked (was 0x1c0e08) so distance cools toward neutral instead of red-casting */
 
   var camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1600);
 
-  var hemi = new THREE.HemisphereLight(0xffa04d, 0x0a0d05, 0.8);
+  /* ---- WAVE 45 DEFECT 2: WARM/COOL SEPARATION ---------------------------------
+     Measured before w45: 73.0% of the frame was warm, 0.0% was cool, even though
+     a moon, a cool moonLight, a star field and a storm all exist. hemi 0.8 (warm
+     0xffa04d) + dir 0.3 (warm) out-voted moonLight 0.5, so the night baked to one
+     brown wash and nothing read as LIT. Rebalanced, same three lights, no new ones:
+     hemi drops + cools (sky leans steel, ground bounce stays warm), moonLight lifts
+     so the cool key actually lands on the world, and the fog stops baking red. */
+  var hemi = new THREE.HemisphereLight(0x93b0dc, 0x0d0a05, 0.5);   /* cool sky / warm ground bounce */
   scene.add(hemi);
-  var dir = new THREE.DirectionalLight(0xffb36b, 0.3);   /* ember bounce, dialed down for night */
+  var dir = new THREE.DirectionalLight(0xffb36b, 0.34);   /* ember bounce — now the shadow key */
   dir.position.set(60, 120, -80);
   scene.add(dir);
-  /* WAVE 5: cool dim steel-blue moonlight rim from the moon's direction */
-  var moonLight = new THREE.DirectionalLight(0x93a9d6, 0.5);
+  /* WAVE 5: cool steel-blue moonlight rim from the moon's direction.
+     WAVE 45: lifted 0.5 -> 0.9 so the cool half of the frame actually exists;
+     hue kept moonlit-blue, well below the ember beacons so warm stays the HERO. */
+  var moonLight = new THREE.DirectionalLight(0x8fa8e0, 1.1);
   moonLight.position.set(160, 175, 800);
   scene.add(moonLight);
+
+  if (SHADOWS_ON) {
+    var SHADOW_EXT = 62;                                    /* ortho half-extent (world units) */
+    dir.castShadow = true;
+    dir.shadow.mapSize.set(1024, 1024);
+    dir.shadow.camera.left = -SHADOW_EXT;
+    dir.shadow.camera.right = SHADOW_EXT;
+    dir.shadow.camera.top = SHADOW_EXT;
+    dir.shadow.camera.bottom = -SHADOW_EXT;
+    dir.shadow.camera.near = 1;
+    dir.shadow.camera.far = 420;
+    dir.shadow.bias = -0.0007;
+    dir.shadow.normalBias = 0.035;                          /* kills acne on the big flat night planes */
+    scene.add(dir.target);                                  /* target re-anchors to the player per frame */
+  }
 
   /* ---------------- WAVE 5 post-processing (desktop only; phones ride clean) ----------------
      RenderPass -> UnrealBloom (neon sign / skull moon / taillights / headlights / stars glow;
@@ -394,6 +433,10 @@
     dirtTex.repeat.set(5, 9);
     dirtTex.anisotropy = 4;
   }
+  /* W45: road/shoulder stay LAMBERT. A live single-material A/B proved MeshStandardMaterial
+     on the 24u road plane (ANY roughness) lifts the whole frame at the ride's grazing camera
+     angle — dark<16 32.4% -> 69.4%, bright 63.6% -> 29.3% on the same frame — which violates
+     ART-BIBLE rule 1 "Night is DARK". PBR is the wrong tool for this geometry. Reverted. */
   var roadMat = new THREE.MeshLambertMaterial({ color: 0x1b1b1e, map: asphaltTex || null });
   var dirtMat = new THREE.MeshLambertMaterial({ color: 0x171106, map: dirtTex || null });
   /* lane paint: Lambert — unlit except inside the headlight spots, so dashes/edges
@@ -1810,6 +1853,7 @@
   /* ---------------- bike factory ---------------- */
   /* WAVE 10 PACK ROSTER: shared mat/geo cache across player + NPC bikes (perf:
      one Lambert/Basic each per color family instead of per-mesh allocation). */
+  /* W45: bike mats stay LAMBERT (see the road note above — PBR is reverted build-wide). */
   var MATS = {
     dark: new THREE.MeshLambertMaterial({ color: 0x141414 }),
     eng: new THREE.MeshLambertMaterial({ color: 0x2a2a2e }),
@@ -2506,7 +2550,7 @@
   };
   var weather = { phase: 'calm', t: 0, dur: STORM.DUR.calm, nextBolt: 8, boltT: 0, flicks: 0, toastShown: false };
   function stormDur(phase) { return STORM.DUR[phase] * rand(0.85, 1.15); }
-  var HEMI_BASE = 0.8, MOON_BASE = 0.5;                       /* match bootstrap intensities */
+  var HEMI_BASE = 0.5, MOON_BASE = 1.1;                       /* WAVE 45: match rebalanced bootstrap (cool sky / lifted moon) */
   var lightSpike = 0;                                         /* seconds of sky-light spike left */
 
   /* Rain streak texture (POT 32x32 canvas, house pattern — same spirit as the sign canvases) */
@@ -4654,6 +4698,17 @@
 
     moon.position.set(game.x + 160, 175, game.z + 800);
     ground.position.z = game.z;
+
+    /* WAVE 45 DEFECT 1: the shadow frustum RIDES the player. Without this the 62u
+       ortho box would sit at the origin and the ride would walk straight out of
+       shadowed space several seconds in. Key + target ride a small lookahead so the
+       box leads the bike (shadows appear ahead, not behind). */
+    if (SHADOWS_ON) {
+      var sx = game.x, sz = game.z + 26;
+      dir.position.set(sx + 60, 120, sz - 80);
+      dir.target.position.set(sx, 0, sz);
+      dir.target.updateMatrixWorld();
+    }
   }
 
   /* ---------------- WAVE 18: ONCOMING — pooled westbound traffic ----------------
@@ -5523,6 +5578,105 @@
       return true;
     }
   };
+
+  /* ---------------- WAVE 45 DEFECTS 1 + 4: GROUNDING + LIGHT SHAFTS ----------------
+     Runs ONCE after every builder has run, before boot. No per-frame cost.
+
+     DEFECT 1 (grounding): before w45 NOTHING cast a shadow, so props/bikes/riders
+     floated. Fix without an unstable hand-list: walk the named SCENE ROOTS we want
+     grounded (landmarks, actors, the player rig) and flip castShadow on their real
+     meshes, receiveShadow on the big flat DATUMS only (ground + a road segment).
+     Meshes that are additive/self-lit become shadow CASTERS never RECEIVERS — a
+     receiver needs lighting to darken; the Basic/additive beacon art is unlit by
+     design and must stay that way (ART-BIBLE: self-lit is the only bright thing).
+     Corn, junk, ridge, stars, particles stay out entirely: pure perf, zero read. */
+  if (SHADOWS_ON) {
+    var SHADOW_CAST_ROOTS = [];
+    var _needRoots = [gasStation, diner, barn, tower, drivein, player, hoaCar,
+                      quest && quest.stranded, quest && quest.towBike];
+    for (var _ri = 0; _ri < _needRoots.length; _ri++) {
+      if (_needRoots[_ri]) SHADOW_CAST_ROOTS.push(_needRoots[_ri]);
+    }
+    if (typeof landmarks !== 'undefined') {
+      for (var _li = 0; _li < landmarks.length; _li++) {
+        if (landmarks[_li] && landmarks[_li].grp) SHADOW_CAST_ROOTS.push(landmarks[_li].grp);
+      }
+    }
+    if (typeof packRiders !== 'undefined') {
+      for (var _pi = 0; _pi < packRiders.length; _pi++) if (packRiders[_pi]) SHADOW_CAST_ROOTS.push(packRiders[_pi]);
+    }
+    if (typeof trafCars !== 'undefined') {
+      for (var _ti = 0; _ti < trafCars.length; _ti++) if (trafCars[_ti] && trafCars[_ti].g) SHADOW_CAST_ROOTS.push(trafCars[_ti].g);
+    }
+    /* riders/residents live on their own roots too */
+    if (typeof loiterer !== 'undefined' && loiterer) SHADOW_CAST_ROOTS.push(loiterer);
+    if (typeof cook !== 'undefined' && cook) SHADOW_CAST_ROOTS.push(cook);
+    if (typeof watchman !== 'undefined' && watchman) SHADOW_CAST_ROOTS.push(watchman);
+
+    var _shadowMeshes = 0;
+    for (var _r = 0; _r < SHADOW_CAST_ROOTS.length; _r++) {
+      SHADOW_CAST_ROOTS[_r].traverse(function (o) {
+        if (!o.isMesh || !o.geometry) return;
+        var m = o.material;
+        if (!m || m.transparent || m.blending === THREE.AdditiveBlending) return;  /* unlit/glow art: out */
+        if (m.isMeshBasicMaterial) return;                                          /* unlit by design: out */
+        o.castShadow = true;
+        _shadowMeshes++;
+      });
+    }
+    /* receivers: ONLY the datums that own a big flat surface under the lights */
+    ground.receiveShadow = true;
+    var _seg = scene.children;
+    for (var _si = 0; _si < _seg.length; _si++) {
+      var _c = _seg[_si];
+      if (_c && _c.userData && _c.userData.wet && _c.children) {     /* a road segment group */
+        for (var _ci = 0; _ci < _c.children.length; _ci++) {
+          var _rd = _c.children[_ci];
+          if (_rd.isMesh && _rd.material && _rd.material === roadMat) _rd.receiveShadow = true;
+        }
+      }
+    }
+    if (typeof window !== 'undefined') {
+      window.HogShadows = { on: true, meshes: _shadowMeshes, roots: SHADOW_CAST_ROOTS.length };
+    }
+
+    /* DEFECT 4 (air): additive light COLUMNS in the fog under the hero beacons — the
+       exact proven pattern the headlight beam already uses (sub-bloom additive cone,
+       depthWrite:false). One per beacon, pooled at build; opacity kept under the 0.72
+       bloom line like every other element of the night art. */
+    var shaftTex = (function () {
+      var c = document.createElement('canvas'); c.width = 32; c.height = 128;
+      var g = c.getContext('2d');
+      var lg = g.createLinearGradient(0, 0, 0, 128);
+      lg.addColorStop(0.00, 'rgba(255,190,120,0.55)');   /* base at the lamp */
+      lg.addColorStop(0.45, 'rgba(255,180,110,0.18)');
+      lg.addColorStop(1.00, 'rgba(255,170,100,0.0)');    /* fades up into the dark */
+      g.fillStyle = lg; g.fillRect(0, 0, 32, 128);
+      var t = new THREE.CanvasTexture(c);
+      t.encoding = THREE.sRGBEncoding;
+      return t;
+    })();
+    var shaftMat = new THREE.MeshBasicMaterial({
+      map: shaftTex, transparent: true, opacity: 0.30, fog: false,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    });
+    function addShaft(x, y, z, w, h, op) {
+      var geo = new THREE.ConeGeometry(w, h, 12, 1, true);
+      var m = shaftMat.clone(); m.opacity = op;
+      var shaft = new THREE.Mesh(geo, m);
+      shaft.rotation.x = Math.PI;                 /* apex DOWN at the lamp, flare up */
+      shaft.position.set(x, y + h / 2, z);
+      shaft.renderOrder = 3;
+      scene.add(shaft);
+      return shaft;
+    }
+    var lightShafts = [
+      addShaft(roadX(30) + 30, 6.2, 30, 5.0, 26, 0.30),     /* gas-station canopy */
+      addShaft(roadX(1250) + 28, 4.5, 1250, 4.2, 22, 0.26), /* diner door */
+      addShaft(roadX(3860) - 34, 5.4, 3860, 4.4, 24, 0.24)  /* barn / destination side */
+    ];
+    window.HogShafts = { count: lightShafts.length, meshes: lightShafts };
+  }
 
   /* ---------------- boot ---------------- */
   var loadPct = 2;
