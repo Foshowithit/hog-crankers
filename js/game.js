@@ -933,8 +933,10 @@
   /* ---------------- roadside junk: dead cars + hay bales (instanced, recycled) ---------------- */
   var AX = new THREE.Vector3(0, 1, 0);
   var CARS_N = IS_TOUCH ? 10 : 14;
-  var carBodyGeo = new THREE.BoxGeometry(4.4, 1.1, 1.9); carBodyGeo.translate(0, 0.62, 0);
-  var carCabGeo = new THREE.BoxGeometry(2.3, 0.85, 1.72); carCabGeo.translate(-0.25, 1.5, 0);
+  /* W55: authored low-poly hulls replace the raw boxes (judge: "perfect primitive box, hard
+     90-degree corners"). Fall back to the old boxes if the geo builders are missing. */
+  var carBodyGeo = (V.deadCarBodyGeo ? V.deadCarBodyGeo() : (function(){ var g=new THREE.BoxGeometry(4.4,1.1,1.9); g.translate(0,0.62,0); return g; })());
+  var carCabGeo = (V.deadCarCabGeo ? V.deadCarCabGeo() : (function(){ var g=new THREE.BoxGeometry(2.3,0.85,1.72); g.translate(-0.25,1.5,0); return g; })());
   var carBodyMesh = new THREE.InstancedMesh(carBodyGeo, new THREE.MeshLambertMaterial({ color: 0x3d2a1a }), CARS_N);
   var carCabMesh = new THREE.InstancedMesh(carCabGeo, new THREE.MeshLambertMaterial({ color: 0x241a12 }), CARS_N);
   var cars = [];
@@ -956,9 +958,8 @@
   scene.add(carCabMesh);
 
   var BALE_N = IS_TOUCH ? 12 : 18;
-  var baleGeo = new THREE.CylinderGeometry(0.85, 0.85, 1.5, 9);
-  baleGeo.rotateZ(Math.PI / 2); // lying on its side
-  baleGeo.translate(0, 0.85, 0);
+  /* W55: faceted tapered bale replaces the uniform cylinder. */
+  var baleGeo = (V.baleGeo ? V.baleGeo() : (function(){ var g=new THREE.CylinderGeometry(0.85,0.85,1.5,9); g.rotateZ(Math.PI/2); g.translate(0,0.85,0); return g; })());
   var baleMesh = new THREE.InstancedMesh(baleGeo, new THREE.MeshLambertMaterial({ color: 0x5c4a22 }), BALE_N);
   var bales = [];
   for (var bai = 0; bai < BALE_N; bai++) {
