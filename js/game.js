@@ -564,17 +564,22 @@
 
   /* ---------------- corn (instanced crossed leaf planes) ---------------- */
   var CORN_N = IS_TOUCH ? 1300 : 2400;
-  var cornGeo = new THREE.PlaneGeometry(2.6, 2.5);
-  cornGeo.translate(0, 1.25, 0);
+  /* W54: prefer the real 3D low-poly corn blade (volume + light response + shadow); fall back
+     to the crossed-plane billboard only if the geo builder is missing. */
+  var cornGeo3D = (V.cornBladeGeo ? V.cornBladeGeo() : null);
+  var cornGeo = cornGeo3D || new THREE.PlaneGeometry(2.6, 2.5);
+  if (!cornGeo3D) cornGeo.translate(0, 1.25, 0);
   /* W48 VARIETY: the atlas (4 distinct clumps in one sheet) replaces the single silhouette;
      each instance offsets its UVs into one column via the aCornCol attribute below. Falls back
      to the single cornTexture if the atlas is unavailable (graceful, same pattern as everywhere). */
   var cornAtlasReady = !!(V.cornAtlasTexture);
-  var cornMat = new THREE.MeshLambertMaterial({
-    color: 0xffffff,
-    map: (cornAtlasReady ? srgb(V.cornAtlasTexture()) : (V.cornTexture ? srgb(V.cornTexture()) : null)),
-    transparent: true, alphaTest: 0.4, side: THREE.DoubleSide
-  });
+  var cornMat = cornGeo3D
+    ? new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: true, side: THREE.DoubleSide })
+    : new THREE.MeshLambertMaterial({
+        color: 0xffffff,
+        map: (cornAtlasReady ? srgb(V.cornAtlasTexture()) : (V.cornTexture ? srgb(V.cornTexture()) : null)),
+        transparent: true, alphaTest: 0.4, side: THREE.DoubleSide
+      });
   /* WAVE 9: close-up corn glare fix — moonlit corn reads right at distance, but beside the
      bike the player light + crossed-plane overdraw blow it out (judge nit). Distance-dim in
      the shader via the color chunk (r128 resolves chunk includes AFTER onBeforeCompile, so the
