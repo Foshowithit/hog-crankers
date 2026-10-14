@@ -901,9 +901,12 @@
   for (var sp = 0; sp < signs.length; sp++) placeSign(signs[sp]);
 
   /* ---------------- distant ridge silhouettes (backdrop: follows player, never recycles) ---------------- */
-  function buildRidge(tall) {
+  function buildRidge(tall, p1, p2, p3) {
+    /* W57: phases are AUTHORED CONSTANTS, not rand(). Unseeded phases made the ridge
+       silhouette — the single largest shape on screen — different on every load, which
+       also broke every visual A/B (you cannot judge a change against a moving backdrop).
+       Fixed phases also let left/right ridges be composed rather than two coin flips. */
     var COLS = 110, HALF = 1600;
-    var p1 = rand(0, 6.28), p2 = rand(0, 6.28), p3 = rand(0, 6.28);
     var pos = new Float32Array(COLS * 2 * 3);
     var idx = [];
     for (var i = 0; i < COLS; i++) {
@@ -925,8 +928,8 @@
     scene.add(mesh);
     return mesh;
   }
-  var ridgeL = buildRidge(true);
-  var ridgeR = buildRidge(false);
+  var ridgeL = buildRidge(true,  0.90, 3.10, 5.40);   /* tall far ridge  — authored */
+  var ridgeR = buildRidge(false, 2.20, 0.40, 4.60);   /* near shoulder   — authored */
   ridgeL.position.set(roadX(30) - 334, 0, 30);
   ridgeR.position.set(roadX(30) + 334, 0, 30);
 
