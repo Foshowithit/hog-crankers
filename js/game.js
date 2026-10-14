@@ -11,6 +11,29 @@
   function lerp(a, b, t) { return a + (b - a) * t; }
   function rand(a, b) { return a + Math.random() * (b - a); }
   function pick(arr) { return arr[(Math.random() * arr.length) | 0]; }
+  /* NOTE (WAVE 58): rand()/pick() above are deliberately left calling the *global*
+     RNG binding, so the load-time seeding block below governs them too. */
+
+  /* ---------------- WAVE 58 SKY DETERMINISM (build-time seed) ----------------
+     The load-time world (sky, stars, ground haze, cloud deck, corn, fences, dead cars,
+     bales, gas-pad mottle, drive-in grain, farms/landmarks) drew straight from
+     the global RNG, so the whole backdrop re-rolled on every page load — the single
+     biggest 'this is not authored' tell in the blind read. We swap the GLOBAL
+     RNG binding to a seeded mulberry32 for the duration of the SYNCHRONOUS
+     load-time build only, then restore the native function before the frame loop
+     starts. Gameplay randomness (sparks, embers, weather, traffic, train) runs after
+     the restore and stays genuinely random — feel is untouched. */
+  function srng(s) {
+    return function () {
+      s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  var SRNG_BUILD_SEED = 0xC0FFEE;
+  var _nativeRandom = Math.random;
+  Math.random = srng(SRNG_BUILD_SEED);
 
   var audio = window.HogAudio;
   var voice = window.HogVoice;   /* speech synthesis — optional, no-ops if absent */
@@ -5967,6 +5990,10 @@
       }, 250);
     }, 1200);
   });
+
+  /* WAVE 58: end of the synchronous build. Every load-time texture/geometry site has
+     consumed the seeded stream; put the native RNG back so the ride stays alive. */
+  Math.random = _nativeRandom;
 
   requestAnimationFrame(frame);
 })();

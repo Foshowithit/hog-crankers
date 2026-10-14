@@ -40,7 +40,7 @@
     '/* WAVE 9 readability: labels bigger + full-strength (judge: STEER too faint),',
     '   crank button gets a solid ring + glow so it pops as THE button */',
     '.tbtn small{font-family:Arial,Helvetica,sans-serif;font-weight:bold;font-size:12px;',
-    '  letter-spacing:2px;color:#ffffff;opacity:1;margin-top:3px;text-shadow:0 2px 0 #000;}',
+    '  letter-spacing:2px;color:var(--bone);opacity:1;margin-top:3px;text-shadow:0 2px 0 #000;}',
     '#tleft{left:calc(16px + env(safe-area-inset-left));width:96px;height:96px;font-size:40px;}',
     '#tright{left:calc(124px + env(safe-area-inset-left));width:96px;height:96px;font-size:40px;}',
     '#tcrank{right:calc(16px + env(safe-area-inset-right));width:140px;height:140px;border-radius:50%;',
