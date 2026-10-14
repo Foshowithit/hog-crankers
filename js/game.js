@@ -2102,9 +2102,11 @@
       GEO.frame = new THREE.BoxGeometry(0.3, 0.32, 1.5);
       GEO.eng = new THREE.BoxGeometry(0.34, 0.42, 0.5);
       GEO.fin = new THREE.BoxGeometry(0.38, 0.03, 0.52);
-      GEO.tank = new THREE.BoxGeometry(0.4, 0.3, 0.6);
+      /* W56: authored teardrop tank (beveled outline) replaces the raw box. */
+      GEO.tank = (V.bikeTankGeo ? V.bikeTankGeo() : new THREE.BoxGeometry(0.4, 0.3, 0.6));
       GEO.strap = new THREE.BoxGeometry(0.42, 0.05, 0.66);
-      GEO.stripe = new THREE.BoxGeometry(0.1, 0.32, 0.5);
+      /* W56: stripe follows the tank crown (a thin shell strip, still a cheap box) */
+      GEO.stripe = new THREE.BoxGeometry(0.11, 0.30, 0.46);
       GEO.seat = new THREE.BoxGeometry(0.36, 0.14, 0.62);
       GEO.fork = new THREE.CylinderGeometry(0.045, 0.045, 0.95, 5);
       GEO.bar = new THREE.CylinderGeometry(0.035, 0.035, 0.85, 5);
